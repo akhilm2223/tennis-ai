@@ -1,0 +1,23 @@
+flask==3.0.0
+flask-cors==4.0.0
+flask-socketio==5.3.5
+python-socketio==5.10.0
+opencv-python==4.8.1.78
+numpy>=1.26.0,<2.0.0
+ultralytics>=8.1.0
+# Note: mediapipe may not be available for Python 3.13 yet
+# If needed for pose tracking, consider using Python 3.11 or 3.12
+# mediapipe>=0.11.0
+filterpy==1.4.5
+werkzeug==3.0.1
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Voice Coach Chat Dependencies
+python-dotenv>=1.0.0
+pinecone>=3.0.0
+anthropic>=0.18.0
+google-generativeai>=0.3.0
+elevenlabs>=1.0.0
+SpeechRecognition>=3.10.0
+pydub>=0.25.1
