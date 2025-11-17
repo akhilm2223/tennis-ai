@@ -26,6 +26,8 @@ from modules.visual_skeleton import draw_skeleton, draw_bbox, draw_speed_at_cent
 from auto_detect_court import detect_court_automatic, draw_court_lines, draw_court_corners, draw_court_status
 from mini_court import MiniCourt
 from trackers.physics_ball_tracker import PhysicsBallTracker
+from trackers.rally_analyzer import RallyAnalyzer
+from trackers.court_line_tracker import CourtLineTracker
 from tennis_utils import SpeedTracker, draw_circle, draw_trail, draw_stats_panel
 from constants.config import (
     FPS, PIXEL_TO_METER, 
@@ -34,7 +36,7 @@ from constants.config import (
 )
 
 
-def main(video_path, output_path=None, calibrate=True, use_pose=True, show_preview=True, show_bbox=False, court_model_path=None, trigger_box=None, manual_court_calibration=None):
+def main(video_path, output_path=None, calibrate=True, use_pose=True, show_preview=True, show_bbox=False, court_model_path=None, trigger_box=None, manual_court_calibration=None, court_lines_path=None):
     """
     Main tennis match analysis pipeline with pose tracking
     
@@ -191,6 +193,17 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
     # Initialize advanced physics-based ball tracker
     ball_tracker = PhysicsBallTracker(court_detector=court_detector, fps=fps)
     
+    # Initialize rally analyzer for point/shot tracking
+    rally_analyzer = RallyAnalyzer(court_detector=court_detector, fps=fps)
+    print("✅ Rally analyzer initialized (point tracking, in/out detection)")
+    
+    # Initialize perfect court line tracker for stable line visualization
+    court_line_tracker = CourtLineTracker(court_detector=court_detector, manual_lines_path=court_lines_path)
+    if court_lines_path:
+        print("✅ Court line tracker initialized with MANUAL LINES (perfect accuracy!)")
+    else:
+        print("✅ Court line tracker initialized (temporal smoothing, complete line structure)")
+    
     # Initialize speed trackers
     ball_speed_tracker = SpeedTracker(window_size=SPEED_SMOOTHING_FRAMES)
     player_speed_trackers = {0: SpeedTracker(), 1: SpeedTracker()}
@@ -253,9 +266,14 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
                 progress = (frame_count / total_frames) * 100
                 print(f"Progress: {progress:.1f}% ({frame_count}/{total_frames} frames)", end='\r')
             
-            # === COURT TRACKING (every 5 frames for performance) ===
-            if court_detector and frame_count % 5 == 0:
-                court_detector.detect_frame(frame)
+            # === COURT TRACKING (every frame for perfect line tracking) ===
+            if court_detector:
+                # Update court detector (every 5 frames for performance)
+                if frame_count % 5 == 0:
+                    court_detector.detect_frame(frame)
+                
+                # Update court line tracker (every frame for smooth visualization)
+                court_line_tracker.update(frame, court_detector)
             
             # === POSE TRACKING ===
             # OPTIMIZED: Only track full skeleton for Player 1 (near camera)
@@ -441,6 +459,17 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
             ball_is_predicted = ball_result['is_predicted']
             ball_court_position = ball_result['court_position']
             
+            # Update rally analyzer with current frame data
+            rally_analyzer.update(
+                frame_num=frame_count,
+                ball_position=ball_position,
+                ball_velocity=ball_velocity,
+                court_position=ball_court_position,
+                bounces=ball_tracker.get_bounces(),
+                player_positions=player_positions,
+                is_predicted=ball_is_predicted
+            )
+            
             # If no YOLO but Kalman has position, update last_ball_center
             if ball_center is None and ball_position is not None:
                 last_ball_center = ball_position
@@ -615,10 +644,14 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
             # Trigger zone works silently in background (no visualization)
             # You can add --trigger-box argument to customize the zone
             
-            # Draw stats panel (like example_enhanced_ball_detection.py)
+            # Draw stats panel (enhanced with rally info)
             detection_rate = (len([e for e in ball_trail if e]) / frame_count * 100) if frame_count > 0 else 0
             
             tracking_status = "ACTIVE" if ball_tracking_started else "WAITING"
+            
+            # Get current rally info
+            rally_info = rally_analyzer.get_live_rally_info()
+            
             stats_text = [
                 f"Frame: {frame_count}",
                 f"Tracking: {tracking_status}",
@@ -628,12 +661,22 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
                 f"Model: Custom best.pt"
             ]
             
+            # Add rally info if active
+            if rally_info:
+                stats_text.extend([
+                    "",  # Blank line
+                    f"Rally #{rally_info['rally_number']}",
+                    f"Shots: {rally_info['shots']}",
+                    f"Score: P1 {rally_info['score'][1]} - {rally_info['score'][2]} P2"
+                ])
+            
             y_offset = 30
             for i, text in enumerate(stats_text):
-                cv2.putText(frame, text, (10, y_offset + i * 25),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                cv2.putText(frame, text, (10, y_offset + i * 25),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+                if text:  # Skip empty lines for positioning
+                    cv2.putText(frame, text, (10, y_offset + i * 25),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                    cv2.putText(frame, text, (10, y_offset + i * 25),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
             
             # 4. Draw legend at bottom
             legend_y = height - 60
@@ -670,19 +713,32 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
             cv2.putText(frame, "Bounce", (legend_x + 265, legend_y + 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
             
-            # 6. Draw court keypoints only (if ML detection was used)
-            if court_detector and court_detector.keypoints is not None:
-                from trackers.court_line_detector import CourtLineDetector
-                temp_detector = CourtLineDetector.__new__(CourtLineDetector)
-                frame = temp_detector.draw_keypoints(frame, court_detector.keypoints, 
-                                                    color=(0, 255, 0), radius=5, show_labels=False)
+            # 6. Draw perfect court lines with temporal smoothing
+            if court_line_tracker.initialized:
+                frame = court_line_tracker.draw(frame, show_all_lines=True, show_labels=False)
             
-            # Court status removed - clean visual
+            # Court status (optional, clean visual)
+            # Uncomment below to show calibration status
+            # frame = draw_court_status(frame, court_detector, show_status=True)
             
             # 6. Draw mini-court (ball tracker only - no players + bounce markers)
             # Use court_position if available, otherwise fall back to image position
             if mini_court:
-                mini_court_ball_pos = ball_court_position if ball_court_position else ball_position
+                # Format ball position properly for mini-court
+                if ball_court_position:
+                    # Court coordinates available - pass as dict with court_xy
+                    mini_court_ball_pos = {
+                        'court_xy': ball_court_position,
+                        'image_xy': ball_position
+                    }
+                elif ball_position:
+                    # Only image coordinates available
+                    mini_court_ball_pos = {
+                        'image_xy': ball_position
+                    }
+                else:
+                    mini_court_ball_pos = None
+                
                 # ball_trail now stores just (x, y) tuples, so use directly
                 trail_positions = list(ball_trail) if ball_trail else []
                 
@@ -702,6 +758,9 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
                     bounces=all_bounces  # Pass bounce data to mini-court
                 )
                 frame = mini_court.overlay_on_frame(frame, mini_court_img, position='top_right')
+            
+            # Draw point winner announcement (if any)
+            frame = rally_analyzer.draw_point_announcement(frame)
             
             # Write frame
             out.write(frame)
@@ -724,87 +783,158 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
             pose_tracker.close()
         cv2.destroyAllWindows()
         
-        # === PROFESSIONAL BALL ANALYSIS EXPORT ===
-        # Export complete ball tracking data for later analysis/coaching AI
+        # === CLEAN MINIMAL JSON EXPORT ===
+        # Export only essential match intelligence without circular references
         import json
         
-        ball_history = ball_tracker.get_history()
+        # Force end current rally if still active
+        rally_analyzer.force_end_current_rally(frame_count)
+        
         ball_bounces = ball_tracker.get_bounces()
+        rally_breakdown = rally_analyzer.get_rally_breakdown()
         
-        # Create analysis JSON
-        # Build compact trail for lightweight JSON export
-        compact_trail = []
-        for entry in ball_history:
-            if entry.get('image_xy'):
-                x, y = entry['image_xy']
-                compact_trail.append({
-                    "f": entry['frame'],
-                    "x": float(x),
-                    "y": float(y)
-                })
+        # Extract score
+        score_p1 = rally_breakdown.get('score', {}).get(1, 0)
+        score_p2 = rally_breakdown.get('score', {}).get(2, 0)
         
-        # Build bounce locations with player attribution
-        bounce_locations = []
-        for b in ball_bounces:
-            bounce_locations.append({
-                "frame": b["frame"],
-                "court_xy": b.get("court_xy"),
-                "image_xy": b.get("image_xy"),
-                "speed_kmh": b.get("speed_kmh", 0.0),
-                "player": b.get("player")  # 1, 2, or None
+        # Build clean rally summary (no nested objects or circular refs)
+        rallies_summary = []
+        for rally in rally_breakdown.get('rallies', []):
+            rallies_summary.append({
+                "rally_number": rally.get('rally_id', 0),
+                "start_frame": rally.get('start_frame', 0),
+                "end_frame": rally.get('end_frame', 0),
+                "shots": rally.get('total_shots', 0),
+                "point_winner": rally.get('winner', None),
+                "reason": rally.get('outcome', 'Unknown'),
+                "max_ball_speed_kmh": float(rally.get('max_speed_kmh', 0.0))
             })
         
+        # Build clean bounce list
+        bounces_clean = []
+        for b in ball_bounces:
+            court_xy = b.get("court_xy")
+            bounces_clean.append({
+                "frame": int(b.get("frame", 0)),
+                "court_xy": [float(court_xy[0]), float(court_xy[1])] if court_xy else None,
+                "speed_kmh": float(b.get("speed_kmh", 0.0)),
+                "player": int(b.get("player")) if b.get("player") else None
+            })
+        
+        # Calculate player statistics
+        player_analysis = rally_breakdown.get('player_analysis', {})
+        
+        def get_player_stat(player_id, key, default=0.0):
+            """Safely extract player stat"""
+            val = player_analysis.get(player_id, {}).get(key, default)
+            if isinstance(val, (np.generic, np.ndarray)):
+                return float(val)
+            return float(val) if val else default
+        
+        # Build clean analysis data structure
         analysis_data = {
             "video_info": {
-                "path": video_path,
-                "fps": fps,
-                "resolution": [width, height],
-                "total_frames": total_frames,
-                "processed_frames": frame_count
+                "filename": video_path,
+                "fps": int(fps),
+                "duration_seconds": float(total_frames / fps),
+                "total_frames": int(total_frames),
+                "processed_frames": int(frame_count)
             },
-            "ball_tracking": {
-                "history": ball_history,
-                "compact_trail": compact_trail,  # Lightweight format
-                "total_frames_tracked": len(ball_history),
-                "bounces": ball_bounces,  # Full bounce data
-                "total_bounces": len(ball_bounces)
+            
+            "score": {
+                "player_1": int(score_p1),
+                "player_2": int(score_p2)
             },
-            "bounce_locations": bounce_locations,  # Simplified bounce data for mini-court
-            "statistics": {
+            
+            "rallies": rallies_summary,
+            
+            "bounces": bounces_clean,
+            
+            "player_stats": {
+                "1": {
+                    "avg_shot_speed_kmh": get_player_stat(1, 'avg_shot_speed_kmh', 0.0),
+                    "max_shot_speed_kmh": get_player_stat(1, 'max_shot_speed_kmh', 0.0),
+                    "winners": int(get_player_stat(1, 'winners', 0)),
+                    "errors": int(get_player_stat(1, 'unforced_errors', 0) + get_player_stat(1, 'forced_errors', 0)),
+                    "points_won": int(score_p1),
+                    "total_shots": int(get_player_stat(1, 'total_shots', 0))
+                },
+                "2": {
+                    "avg_shot_speed_kmh": get_player_stat(2, 'avg_shot_speed_kmh', 0.0),
+                    "max_shot_speed_kmh": get_player_stat(2, 'max_shot_speed_kmh', 0.0),
+                    "winners": int(get_player_stat(2, 'winners', 0)),
+                    "errors": int(get_player_stat(2, 'unforced_errors', 0) + get_player_stat(2, 'forced_errors', 0)),
+                    "points_won": int(score_p2),
+                    "total_shots": int(get_player_stat(2, 'total_shots', 0))
+                }
+            },
+            
+            "match_summary": {
+                "total_bounces": len(bounces_clean),
+                "total_rallies": len(rallies_summary),
                 "max_ball_speed_kmh": float(max_ball_speed),
                 "max_player1_speed_kmh": float(max_player_speeds[0]),
                 "max_player2_speed_kmh": float(max_player_speeds[1])
             }
         }
         
-        # Save JSON (with numpy type conversion)
-        json_output_path = output_path.replace('.avi', '_analysis.json').replace('.mp4', '_analysis.json')
-        
-        def convert_numpy(o):
-            """Convert numpy types to native Python types for JSON serialization"""
-            if isinstance(o, np.generic):
-                return o.item()
-            return o
+        # Save clean JSON
+        json_output_path = output_path.replace('.avi', '.json').replace('.mp4', '.json')
         
         with open(json_output_path, 'w') as f:
-            json.dump(analysis_data, f, indent=2, default=convert_numpy)
+            json.dump(analysis_data, f, indent=2)
+        
+        print(f"\n📄 Saved Match Analysis JSON → {json_output_path}")
         
         print("\n" + "-" * 60)
-        print("\n📊 FINAL STATISTICS")
+        print("\n📊 FINAL MATCH STATISTICS")
         print("=" * 60)
         print(f"Frames Processed: {frame_count}/{total_frames}")
         print(f"Tracking Mode: {'OPTIMIZED (P1: MediaPipe, P2: CSRT Tracker)' if use_pose else 'BBOX (YOLO)'}")
-        print(f"Number of Players: 2")
-        print(f"Max Ball Speed: {max_ball_speed:.1f} km/h")
-        print(f"Max Player 1 Speed (Near/MediaPipe): {max_player_speeds[0]:.1f} km/h")
-        print(f"Max Player 2 Speed (Far/CSRT): {max_player_speeds[1]:.1f} km/h")
+        print(f"Match Duration: {total_frames / fps:.1f} seconds")
+        
+        print(f"\n🏆 FINAL SCORE:")
+        print(f"   Player 1: {score_p1} points")
+        print(f"   Player 2: {score_p2} points")
+        print(f"   {'Player 1 WINS!' if score_p1 > score_p2 else 'Player 2 WINS!' if score_p2 > score_p1 else 'TIED!'}")
+        
         print(f"\n🎾 Ball Tracking:")
-        print(f"   Frames Tracked: {len(ball_history)}/{frame_count}")
-        print(f"   Bounces Detected: {len(ball_bounces)}")
+        print(f"   Total Bounces: {len(bounces_clean)}")
+        print(f"   Max Ball Speed: {max_ball_speed:.1f} km/h")
+        
+        print(f"\n📊 Rally Breakdown:")
+        print(f"   Total Rallies: {len(rallies_summary)}")
+        if rallies_summary:
+            max_shots = max([r['shots'] for r in rallies_summary])
+            avg_shots = sum([r['shots'] for r in rallies_summary]) / len(rallies_summary)
+            print(f"   Longest Rally: {max_shots} shots")
+            print(f"   Average Rally Length: {avg_shots:.1f} shots")
+        
+        print(f"\n👤 PLAYER 1 STATS:")
+        p1 = analysis_data['player_stats']['1']
+        print(f"   Points Won: {p1['points_won']}")
+        print(f"   Total Shots: {p1['total_shots']}")
+        print(f"   Winners: {p1['winners']}")
+        print(f"   Errors: {p1['errors']}")
+        print(f"   Avg Shot Speed: {p1['avg_shot_speed_kmh']:.1f} km/h")
+        print(f"   Max Shot Speed: {p1['max_shot_speed_kmh']:.1f} km/h")
+        print(f"   Max Movement Speed: {max_player_speeds[0]:.1f} km/h")
+        
+        print(f"\n👤 PLAYER 2 STATS:")
+        p2 = analysis_data['player_stats']['2']
+        print(f"   Points Won: {p2['points_won']}")
+        print(f"   Total Shots: {p2['total_shots']}")
+        print(f"   Winners: {p2['winners']}")
+        print(f"   Errors: {p2['errors']}")
+        print(f"   Avg Shot Speed: {p2['avg_shot_speed_kmh']:.1f} km/h")
+        print(f"   Max Shot Speed: {p2['max_shot_speed_kmh']:.1f} km/h")
+        print(f"   Max Movement Speed: {max_player_speeds[1]:.1f} km/h")
+        
+        print("\n" + "=" * 60)
+        print(f"✅ Video Output: {output_path}")
+        print(f"✅ JSON Analysis: {json_output_path}")
         print("=" * 60)
-        print(f"\n✅ Video saved to: {output_path}")
-        print(f"✅ Analysis JSON saved to: {json_output_path}")
-        print("=" * 60)
+        print("\n🎾 Match analysis complete! 🏆")
 
 
 if __name__ == "__main__":
@@ -828,6 +958,8 @@ if __name__ == "__main__":
                        help='Path to trained court line detector model (.pth file) for ML-based detection')
     parser.add_argument('--court-calibration', type=str, default=None,
                        help='Path to manual court calibration file (.json) for perfect accuracy')
+    parser.add_argument('--court-lines', type=str, default=None,
+                       help='Path to manual court lines definition file (.json) with all line positions')
     
     args = parser.parse_args()
     
@@ -863,5 +995,6 @@ if __name__ == "__main__":
          show_bbox=args.bbox,
          court_model_path=args.court_model,
          trigger_box=args.trigger_box,
-         manual_court_calibration=manual_calibration)
+         manual_court_calibration=manual_calibration,
+         court_lines_path=args.court_lines)
 

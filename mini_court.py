@@ -149,10 +149,20 @@ class MiniCourt:
         # === DRAW PERMANENT BOUNCE POINTS (COLOR-CODED BY PLAYER) ===
         # Draw all detected bounce points with player attribution
         for idx, bounce_entry in enumerate(self.bounce_points):
-            # Extract position from bounce dict (prefer court_xy for accurate mapping)
+            # Extract position from bounce dict
             if isinstance(bounce_entry, dict):
-                bounce_pos = bounce_entry.get('court_xy') or bounce_entry.get('image_xy')
+                court_xy = bounce_entry.get('court_xy')
+                image_xy = bounce_entry.get('image_xy')
                 player_id = bounce_entry.get('player')  # 1, 2, or None
+                
+                # If we have court_xy, use it directly (already in court space)
+                if court_xy is not None:
+                    mini_pos = self._court_to_mini(court_xy)
+                # Otherwise convert image_xy to court coordinates first
+                elif image_xy is not None:
+                    mini_pos = self._image_to_mini(image_xy)
+                else:
+                    mini_pos = None
             else:
                 # Legacy tuple/list format: might be [x, y] or [x, y, frame]
                 # Always extract only first 2 values
@@ -161,11 +171,11 @@ class MiniCourt:
                 else:
                     bounce_pos = bounce_entry
                 player_id = None
+                mini_pos = self._image_to_mini(bounce_pos)
             
-            if bounce_pos is None:
+            if mini_pos is None:
                 continue
                 
-            mini_pos = self._world_to_mini(bounce_pos)
             if mini_pos:
                 bounce_num = idx + 1
                 
@@ -186,8 +196,52 @@ class MiniCourt:
                            (mini_pos[0] - 4, mini_pos[1] + 4),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
         
-        # === NO LIVE BALL TRACKING - ONLY BOUNCE POINTS ===
-        # (Ball position and players are not shown in real-time)
+        # === DRAW LIVE BALL POSITION ===
+        if ball_position is not None:
+            # ball_position can be dict with 'court_xy' or 'image_xy', or just a tuple
+            if isinstance(ball_position, dict):
+                ball_court_xy = ball_position.get('court_xy')
+                ball_image_xy = ball_position.get('image_xy')
+                
+                if ball_court_xy is not None:
+                    ball_mini_pos = self._court_to_mini(ball_court_xy)
+                elif ball_image_xy is not None:
+                    ball_mini_pos = self._image_to_mini(ball_image_xy)
+                else:
+                    ball_mini_pos = None
+            else:
+                # Assume it's image coordinates (tuple or list)
+                ball_mini_pos = self._image_to_mini(ball_position)
+            
+            if ball_mini_pos:
+                # Draw live ball as a yellow circle with glow effect
+                cv2.circle(canvas, ball_mini_pos, 6, (0, 255, 255), -1)  # Yellow fill
+                cv2.circle(canvas, ball_mini_pos, 7, (255, 255, 255), 1)  # White border
+                # Add a subtle glow
+                cv2.circle(canvas, ball_mini_pos, 10, (0, 255, 255), 1)  # Outer glow
+        
+        # === DRAW BALL TRAIL (if provided) ===
+        if ball_trail is not None and len(ball_trail) > 1:
+            trail_points = []
+            for trail_pos in ball_trail[-10:]:  # Last 10 positions
+                if isinstance(trail_pos, dict):
+                    trail_court = trail_pos.get('court_xy')
+                    if trail_court:
+                        trail_mini = self._court_to_mini(trail_court)
+                        if trail_mini:
+                            trail_points.append(trail_mini)
+                elif trail_pos:
+                    trail_mini = self._image_to_mini(trail_pos)
+                    if trail_mini:
+                        trail_points.append(trail_mini)
+            
+            # Draw trail as connected line with fading effect
+            if len(trail_points) > 1:
+                for i in range(len(trail_points) - 1):
+                    # Fade from older (dim) to newer (bright)
+                    alpha = int(128 + (i / len(trail_points)) * 127)
+                    color = (0, alpha, alpha)  # Cyan with varying intensity
+                    cv2.line(canvas, trail_points[i], trail_points[i + 1], color, 1, cv2.LINE_AA)
         
         # === DRAW TITLE AND BOUNCE COUNT ===
         if self.show_title:
@@ -198,9 +252,50 @@ class MiniCourt:
         
         return canvas
     
-    def _world_to_mini(self, position):
+    def _court_to_mini(self, court_pos):
         """
-        Convert world coordinates to mini court coordinates using homography
+        Convert court coordinates (already in court space) to mini court pixels
+        Court coordinates are typically in meters from court origin
+        """
+        if court_pos is None:
+            return None
+        
+        # Extract x, y from court coordinates
+        if isinstance(court_pos, (list, tuple)):
+            if len(court_pos) >= 2:
+                court_x, court_y = float(court_pos[0]), float(court_pos[1])
+            else:
+                return None
+        else:
+            return None
+        
+        # Court dimensions in meters (from manual court lines or auto_detect_court.py)
+        # Typical court coordinate system: 0-400 width, 0-800 length (in some unit)
+        # We need to normalize these to 0-1 range then map to mini-court pixels
+        
+        # Map from court coordinates to mini court pixels
+        # Assuming court space is approximately 0-400 (width) x 0-800 (length)
+        # Based on the manual court lines and homography setup
+        court_width = 400.0  # Adjust based on your court coordinate system
+        court_length = 800.0
+        
+        # Normalize to 0-1
+        norm_x = court_x / court_width
+        norm_y = court_y / court_length
+        
+        # Map to mini-court pixels
+        mini_x = int(self.padding + norm_x * self.draw_width)
+        mini_y = int(self.padding + norm_y * self.draw_height)
+        
+        # Clamp to court bounds
+        mini_x = max(self.padding, min(mini_x, self.padding + self.draw_width))
+        mini_y = max(self.padding, min(mini_y, self.padding + self.draw_height))
+        
+        return (mini_x, mini_y)
+    
+    def _image_to_mini(self, position):
+        """
+        Convert image pixel coordinates to mini court coordinates using homography
         """
         if position is None:
             return None
@@ -222,16 +317,8 @@ class MiniCourt:
                 transformed = cv2.perspectiveTransform(point, self.court_detector.homography_matrix)
                 court_x, court_y = transformed[0][0]
                 
-                # Map from court coordinates (0-400, 0-800) to mini court pixels
-                # Assuming court space is 400x800 (from auto_detect_court.py)
-                mini_x = int(self.padding + (court_x / 400) * self.draw_width)
-                mini_y = int(self.padding + (court_y / 800) * self.draw_height)
-                
-                # Clamp to court bounds
-                mini_x = max(self.padding, min(mini_x, self.padding + self.draw_width))
-                mini_y = max(self.padding, min(mini_y, self.padding + self.draw_height))
-                
-                return (mini_x, mini_y)
+                # Now use _court_to_mini to map court coords to mini pixels
+                return self._court_to_mini([court_x, court_y])
             except:
                 pass
         

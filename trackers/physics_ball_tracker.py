@@ -422,6 +422,7 @@ class PhysicsBallTracker:
     def get_real_speed(self, velocity):
         """
         Calculate real-world speed from pixel velocity
+        Uses court homography if available for accurate measurements
         
         Args:
             velocity: (vx, vy) in pixels/frame
@@ -434,7 +435,46 @@ class PhysicsBallTracker:
         
         vx, vy = velocity
         
-        # Pixel velocity to m/s (approximate conversion)
+        # Method 1: Use court homography for precise speed (PREFERRED)
+        if self.court_detector and self.court_detector.homography_matrix is not None:
+            try:
+                # Get current position in pixels
+                curr_x, curr_y = self.kf.x[0], self.kf.x[1]
+                
+                # Get position after one frame of velocity
+                next_x = curr_x + vx
+                next_y = curr_y + vy
+                
+                # Transform both to court coordinates
+                curr_court = self.get_court_position((curr_x, curr_y))
+                next_court = self.get_court_position((next_x, next_y))
+                
+                if curr_court and next_court:
+                    # Calculate distance in court coordinates
+                    dx_court = next_court[0] - curr_court[0]
+                    dy_court = next_court[1] - curr_court[1]
+                    
+                    # Court coordinates are in pixels on mini-court
+                    # Standard mini-court: 400px width = 8.23m (singles), 800px length = 23.77m
+                    meters_per_pixel_x = 8.23 / 400.0
+                    meters_per_pixel_y = 23.77 / 800.0
+                    
+                    # Convert to meters
+                    dx_meters = dx_court * meters_per_pixel_x
+                    dy_meters = dy_court * meters_per_pixel_y
+                    
+                    # Distance in meters per frame
+                    distance_meters_per_frame = np.sqrt(dx_meters**2 + dy_meters**2)
+                    
+                    # Convert to m/s then km/h
+                    speed_m_per_sec = distance_meters_per_frame * self.fps
+                    speed_km_per_h = speed_m_per_sec * 3.6
+                    
+                    return speed_km_per_h
+            except:
+                pass  # Fall back to pixel-based method
+        
+        # Method 2: Pixel-based estimation (fallback)
         # Assuming ~30 pixels = 1 meter (tuned for typical tennis video)
         pixels_per_meter = 30
         

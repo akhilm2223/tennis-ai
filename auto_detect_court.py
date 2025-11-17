@@ -332,15 +332,22 @@ def detect_court_automatic(frame, use_ml_detector=False, ml_model_path=None):
 
 
 def draw_court_lines(frame, court_detector, color=(0, 255, 0), thickness=2, show_keypoints=False):
-    """Draw stable court lines overlay"""
-    # If ML keypoints are available, draw only the keypoints (no lines)
+    """Draw stable court lines overlay with ML keypoint connections"""
+    # If ML keypoints are available, draw connected lines + keypoints
     if court_detector.keypoints is not None:
         from trackers.court_line_detector import CourtLineDetector
         
         # Create temporary detector just for drawing
-        temp_detector = type('obj', (object,), {})()
-        frame = CourtLineDetector.draw_keypoints(temp_detector, frame, court_detector.keypoints, 
-                                                 color=color, radius=5, show_labels=False)
+        temp_detector = CourtLineDetector.__new__(CourtLineDetector)
+        
+        # Draw court lines connecting keypoints
+        frame = temp_detector.draw_court_lines(frame, court_detector.keypoints, 
+                                              color=color, thickness=thickness)
+        
+        # Optionally draw keypoints on top
+        if show_keypoints:
+            frame = temp_detector.draw_keypoints(frame, court_detector.keypoints, 
+                                                color=color, radius=5, show_labels=False)
         return frame
     
     if court_detector.corners is not None:
