@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import io from 'socket.io-client'
 import './VideoUpload.css'
 
-const API_URL = 'http://localhost:6000'
+const API_URL = 'http://localhost:5001'
 
 export function VideoUpload({ onVideoProcessed }) {
   const [file, setFile] = useState(null)
@@ -15,6 +15,8 @@ export function VideoUpload({ onVideoProcessed }) {
   const [outputFile, setOutputFile] = useState(null)
   const [framePreview, setFramePreview] = useState(null)
   const [frameInfo, setFrameInfo] = useState({ current: 0, total: 0 })
+  const [analysisLogs, setAnalysisLogs] = useState([])
+  const [showLogs, setShowLogs] = useState(true)
 
   useEffect(() => {
     // Connect to WebSocket
@@ -51,6 +53,11 @@ export function VideoUpload({ onVideoProcessed }) {
       }
     })
     
+    // Listen for analysis logs
+    newSocket.on('analysis_log', (data) => {
+      setAnalysisLogs(prev => [...prev, data.log].slice(-100)) // Keep last 100 lines
+    })
+    
     setSocket(newSocket)
     
     return () => newSocket.close()
@@ -74,6 +81,7 @@ export function VideoUpload({ onVideoProcessed }) {
     setProcessing(true)
     setProgress(0)
     setMessage('Uploading video...')
+    setAnalysisLogs([]) // Clear previous logs
 
     const formData = new FormData()
     formData.append('video', file)
@@ -167,6 +175,7 @@ export function VideoUpload({ onVideoProcessed }) {
     setProcessing(true)
     setProgress(0)
     setMessage('Starting quick process...')
+    setAnalysisLogs([]) // Clear previous logs
 
     try {
       const response = await fetch(`${API_URL}/api/process-local`, {
@@ -285,6 +294,70 @@ export function VideoUpload({ onVideoProcessed }) {
                 fontSize: '16px'
               }}>
                 ⏳ Initializing analysis...
+              </div>
+            )}
+          </div>
+        )}
+        
+        {/* Analysis Logs */}
+        {processing && analysisLogs.length > 0 && (
+          <div style={{
+            margin: '20px 0',
+            padding: '20px',
+            background: 'rgba(0, 0, 0, 0.7)',
+            borderRadius: '10px',
+            border: '2px solid rgba(102, 126, 234, 0.3)'
+          }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '10px'
+            }}>
+              <h3 style={{ color: 'white', margin: 0 }}>
+                📊 Analysis Output
+              </h3>
+              <button
+                onClick={() => setShowLogs(!showLogs)}
+                style={{
+                  padding: '5px 15px',
+                  background: 'rgba(102, 126, 234, 0.3)',
+                  border: '1px solid rgba(102, 126, 234, 0.5)',
+                  borderRadius: '5px',
+                  color: 'white',
+                  cursor: 'pointer'
+                }}
+              >
+                {showLogs ? '▼ Hide' : '▶ Show'}
+              </button>
+            </div>
+            {showLogs && (
+              <div style={{
+                maxHeight: '300px',
+                overflowY: 'auto',
+                background: 'rgba(0, 0, 0, 0.5)',
+                padding: '15px',
+                borderRadius: '5px',
+                fontFamily: 'monospace',
+                fontSize: '13px',
+                lineHeight: '1.6'
+              }}>
+                {analysisLogs.map((log, index) => (
+                  <div key={index} style={{
+                    color: log.includes('✅') ? '#4ade80' :
+                           log.includes('❌') ? '#ef4444' :
+                           log.includes('🎾') ? '#60a5fa' :
+                           log.includes('🔴') ? '#f87171' :
+                           log.includes('🔵') ? '#60a5fa' :
+                           log.includes('⚡') ? '#fbbf24' :
+                           'rgba(255, 255, 255, 0.8)',
+                    marginBottom: '3px',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all'
+                  }}>
+                    {log}
+                  </div>
+                ))}
               </div>
             )}
           </div>

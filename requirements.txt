@@ -30,6 +30,9 @@ pinecone-client
 google-generativeai
 anthropic
 
+# Daytona SDK - Secure code execution in sandboxes
+daytona
+
 # Audio processing (required by pydub)
 # Note: Also requires FFmpeg to be installed on system
 # macOS: brew install ffmpeg

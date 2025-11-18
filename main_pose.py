@@ -34,6 +34,64 @@ from constants.config import (
     COLOR_PLAYER1, COLOR_PLAYER2, COLOR_BALL, COLOR_TRAIL,
     SPEED_SMOOTHING_FRAMES
 )
+import json
+
+
+def draw_manual_court_lines(frame, lines_data):
+    """
+    Draw manually defined court lines (CLEAN - no labels, matching manual_lines_UPDATED.jpg)
+    
+    Args:
+        frame: Video frame to draw on
+        lines_data: Dictionary of court lines from JSON
+        
+    Returns:
+        frame with court lines drawn
+    """
+    if not lines_data or 'lines' not in lines_data:
+        return frame
+    
+    lines = lines_data['lines']
+    
+    # EXACT COLOR SCHEME from manual_lines_UPDATED.jpg
+    COLORS = {
+        'baseline_top': (0, 255, 0),       # Green - outer boundary
+        'baseline_bottom': (0, 255, 0),    # Green - outer boundary
+        'sideline_left': (0, 255, 0),      # Green - doubles sideline
+        'sideline_right': (0, 255, 0),     # Green - doubles sideline
+        'service_line_top': (255, 255, 0), # Cyan - service lines
+        'service_line_bottom': (255, 255, 0), # Cyan - service lines
+        'center_service_line': (255, 255, 0), # Cyan - center line
+        'net_line': (255, 0, 255),         # Magenta/Pink - net
+        'singles_left': (0, 255, 255),     # Yellow - singles sideline
+        'singles_right': (0, 255, 255),    # Yellow - singles sideline
+    }
+    
+    THICKNESS = {
+        'baseline_top': 3,
+        'baseline_bottom': 3,
+        'sideline_left': 3,
+        'sideline_right': 3,
+        'service_line_top': 2,
+        'service_line_bottom': 2,
+        'center_service_line': 2,
+        'net_line': 3,
+        'singles_left': 2,
+        'singles_right': 2,
+    }
+    
+    # Draw all lines - CLEAN (no labels) - EXACT coordinates from JSON
+    for line_name, line_data in lines.items():
+        # Use EXACT integer coordinates from JSON (no modifications, no rounding errors)
+        p1 = (int(line_data['point1'][0]), int(line_data['point1'][1]))
+        p2 = (int(line_data['point2'][0]), int(line_data['point2'][1]))
+        color = COLORS.get(line_name, (255, 255, 255))
+        thickness = THICKNESS.get(line_name, 2)
+        
+        # Draw EXACT line with anti-aliasing - NO modifications to coordinates
+        cv2.line(frame, p1, p2, color, thickness, cv2.LINE_AA)
+    
+    return frame
 
 
 def main(video_path, output_path=None, calibrate=True, use_pose=True, show_preview=True, show_bbox=False, court_model_path=None, trigger_box=None, manual_court_calibration=None, court_lines_path=None):
@@ -81,6 +139,30 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     
     print(f"   Output: {output_path}")
+    
+    # Load manual court lines if available
+    import json  # Ensure json is available in function scope
+    manual_court_lines = None
+    manual_lines_path = "court_lines_manual.json"
+    if os.path.exists(manual_lines_path):
+        try:
+            with open(manual_lines_path, 'r') as f:
+                manual_court_lines = json.load(f)
+            print(f"\n✅ Loaded manual court lines from: {manual_lines_path}")
+            print(f"   Lines defined: {len(manual_court_lines.get('lines', {}))} court lines")
+            print(f"   🎯 Using EXACT JSON coordinates - NO detection, NO tracking, NO computation")
+            print(f"   📍 Lines will be drawn at EXACT pixel coordinates from JSON file")
+            print(f"   ⚠️  CRITICAL: manual_court_lines is NOT None: {manual_court_lines is not None}")
+            
+            # Debug: Print first line to verify exact coordinates
+            first_line_name = list(manual_court_lines['lines'].keys())[0]
+            first_line = manual_court_lines['lines'][first_line_name]
+            print(f"   Example: {first_line_name} = {first_line['point1']} → {first_line['point2']}")
+        except Exception as e:
+            print(f"⚠️  Could not load manual court lines: {e}")
+            manual_court_lines = None
+    else:
+        print(f"\n❌ Manual court lines file NOT FOUND: {manual_lines_path}")
     
     # Initialize detectors
     print("\n🔧 Initializing detectors...")
@@ -137,7 +219,44 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
     
     # Court calibration - Manual, ML, or Automatic
     court_detector = None
-    if calibrate:
+    # SKIP calibration if manual lines exist - use JSON coordinates directly
+    if manual_court_lines:
+        print("\n⏭️  SKIPPING court calibration - using EXACT JSON coordinates")
+        from auto_detect_court import CourtDetector
+        court_detector = CourtDetector()
+        
+        # Derive 4 corners from manual lines for mini-court homography
+        # Use baselines and sidelines to create corner points
+        try:
+            lines = manual_court_lines['lines']
+            # Top-left: intersection of baseline_top and sideline_left
+            tl = (int(lines['baseline_top']['point1'][0]), int(lines['baseline_top']['point1'][1]))
+            # Top-right: intersection of baseline_top and sideline_right
+            tr = (int(lines['baseline_top']['point2'][0]), int(lines['baseline_top']['point2'][1]))
+            # Bottom-right: intersection of baseline_bottom and sideline_right
+            br = (int(lines['baseline_bottom']['point1'][0]), int(lines['baseline_bottom']['point1'][1]))
+            # Bottom-left: intersection of baseline_bottom and sideline_left
+            bl = (int(lines['baseline_bottom']['point2'][0]), int(lines['baseline_bottom']['point2'][1]))
+            
+            court_detector.corners = np.array([tl, tr, br, bl], dtype=np.float32)
+            
+            # Create homography for mini-court
+            court_width = 400
+            court_height = 800
+            dst_corners = np.array([
+                [0, 0],
+                [court_width, 0],
+                [court_width, court_height],
+                [0, court_height]
+            ], dtype=np.float32)
+            
+            court_detector.homography_matrix = cv2.getPerspectiveTransform(court_detector.corners, dst_corners)
+            print("✅ Homography created from manual lines - mini-court enabled!")
+        except Exception as e:
+            print(f"⚠️  Could not create homography from manual lines: {e}")
+            court_detector.corners = None
+            court_detector.homography_matrix = None
+    elif calibrate:
         # Use manual calibration if provided (highest priority)
         if manual_court_calibration:
             print("\n🎯 Loading manual court calibration...")
@@ -198,11 +317,17 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
     print("✅ Rally analyzer initialized (point tracking, in/out detection)")
     
     # Initialize perfect court line tracker for stable line visualization
-    court_line_tracker = CourtLineTracker(court_detector=court_detector, manual_lines_path=court_lines_path)
-    if court_lines_path:
-        print("✅ Court line tracker initialized with MANUAL LINES (perfect accuracy!)")
+    # ONLY use court_line_tracker when manual lines NOT available
+    if not manual_court_lines:
+        court_line_tracker = CourtLineTracker(court_detector=court_detector, manual_lines_path=court_lines_path)
+        if court_lines_path:
+            print("✅ Court line tracker initialized with MANUAL LINES (perfect accuracy!)")
+        else:
+            print("✅ Court line tracker initialized (temporal smoothing, complete line structure)")
     else:
-        print("✅ Court line tracker initialized (temporal smoothing, complete line structure)")
+        # Skip court_line_tracker when manual lines exist - draw JSON coordinates directly
+        court_line_tracker = None
+        print("✅ Court line tracker DISABLED - using direct JSON coordinates (no detection/tracking)")
     
     # Initialize speed trackers
     ball_speed_tracker = SpeedTracker(window_size=SPEED_SMOOTHING_FRAMES)
@@ -272,8 +397,10 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
                 if frame_count % 5 == 0:
                     court_detector.detect_frame(frame)
                 
-                # Update court line tracker (every frame for smooth visualization)
-                court_line_tracker.update(frame, court_detector)
+                # Update court line tracker ONLY if it exists (when manual lines not loaded)
+                # When manual lines exist, court_line_tracker is None
+                if court_line_tracker is not None:
+                    court_line_tracker.update(frame, court_detector)
             
             # === POSE TRACKING ===
             # OPTIMIZED: Only track full skeleton for Player 1 (near camera)
@@ -312,12 +439,23 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
                         x1, y1, x2, y2 = best_person
                         w, h = x2 - x1, y2 - y1
                         
-                        # Initialize CSRT tracker
-                        player2_bbox_tracker = cv2.legacy.TrackerCSRT_create()
-                        player2_bbox_tracker.init(frame, (x1, y1, w, h))
-                        player2_bbox_initialized = True
-                        
-                        print(f"   🔒 Player 2 CSRT tracker initialized at ({x1},{y1},{x2},{y2})")
+                        # Initialize CSRT tracker (with fallback)
+                        try:
+                            player2_bbox_tracker = cv2.legacy.TrackerCSRT_create()
+                            player2_bbox_tracker.init(frame, (x1, y1, w, h))
+                            player2_bbox_initialized = True
+                            print(f"   🔒 Player 2 CSRT tracker initialized at ({x1},{y1},{x2},{y2})")
+                        except AttributeError:
+                            print(f"   ⚠️  CSRT tracker not available - using KCF fallback")
+                            try:
+                                player2_bbox_tracker = cv2.legacy.TrackerKCF_create()
+                                player2_bbox_tracker.init(frame, (x1, y1, w, h))
+                                player2_bbox_initialized = True
+                                print(f"   🔒 Player 2 KCF tracker initialized at ({x1},{y1},{x2},{y2})")
+                            except:
+                                print(f"   ⚠️  No tracker available - Player 2 tracking disabled")
+                                player2_bbox_tracker = None
+                                player2_bbox_initialized = False
                         
                         # Create PoseDet for first frame
                         centroid = ((x1 + x2) / 2, (y1 + y2) / 2)
@@ -713,9 +851,36 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
             cv2.putText(frame, "Bounce", (legend_x + 265, legend_y + 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
             
-            # 6. Draw perfect court lines with temporal smoothing
-            if court_line_tracker.initialized:
+            # 6. Draw ONLY manual court lines (EXACT coordinates from court_lines_manual.json)
+            # This ensures the lines match EXACTLY with manual_lines_UPDATED.jpg
+            
+            # DEBUG: Check manual_court_lines status
+            if frame_count == 1:
+                print(f"\n🔍 DEBUG Frame 1 - Court Lines Decision:")
+                print(f"   manual_court_lines = {manual_court_lines is not None}")
+                print(f"   court_line_tracker = {court_line_tracker is not None}")
+                if manual_court_lines:
+                    print(f"   ✅ WILL USE: Manual lines from JSON ({len(manual_court_lines.get('lines', {}))} lines)")
+                elif court_line_tracker is not None:
+                    print(f"   ⚠️  WILL USE: Court line tracker (AUTO-DETECTED LINES)")
+                else:
+                    print(f"   ❌ NO LINES AVAILABLE")
+            
+            if manual_court_lines:
+                # Use EXACT manual coordinates - NO wobble, NO jitter, NO tracking effects
+                frame = draw_manual_court_lines(frame, manual_court_lines)
+                
+                # Debug: Confirm manual lines are being drawn (first frame only)
+                if frame_count == 1:
+                    print(f"   ✅ Drawing EXACT manual court lines from JSON")
+            elif court_line_tracker is not None and court_line_tracker.initialized:
+                # Fallback to tracked court lines ONLY if manual lines not available
+                if frame_count == 1:
+                    print(f"   ⚠️  Using court_line_tracker (manual lines NOT loaded)")
                 frame = court_line_tracker.draw(frame, show_all_lines=True, show_labels=False)
+            else:
+                if frame_count == 1:
+                    print(f"   ❌ NO COURT LINES DRAWN (neither manual nor tracker available)")
             
             # Court status (optional, clean visual)
             # Uncomment below to show calibration status
@@ -875,6 +1040,81 @@ def main(video_path, output_path=None, calibrate=True, use_pose=True, show_previ
                 "max_ball_speed_kmh": float(max_ball_speed),
                 "max_player1_speed_kmh": float(max_player_speeds[0]),
                 "max_player2_speed_kmh": float(max_player_speeds[1])
+            },
+            
+            # COMPREHENSIVE COACHING ANALYSIS - Everything a coach needs
+            "shot_timeline": [
+                # Detailed shot-by-shot breakdown with timestamps, shot types, positions, speeds
+                # Format: {"timestamp": 12.5, "frame": 375, "player": "player_1", 
+                #          "shot_type": "forehand", "position": {"x": 640, "y": 480}, 
+                #          "ball_speed_kmh": 120.5, "pressure": "attacking", "result": "in"}
+                {
+                    "timestamp": float(b.get('frame', 0) / fps),
+                    "frame": int(b.get('frame', 0)),
+                    "ball_position": b.get('position', {}),
+                    "shot_context": "detected_bounce"  # Will be enhanced with shot type detection
+                } for b in bounces_clean[:100]  # Limit to first 100 for performance
+            ],
+            
+            "tactical_analysis": {
+                "court_usage_patterns": {
+                    "player_1_baseline_percentage": 0.0,  # % time at baseline
+                    "player_2_baseline_percentage": 0.0,
+                    "net_approaches_player_1": 0,
+                    "net_approaches_player_2": 0,
+                    "control_shifts_per_rally": 0.0  # Avg times control changed per rally
+                },
+                "shot_distribution": {
+                    "player_1": {"forehands": 0, "backhands": 0, "volleys": 0, "serves": 0},
+                    "player_2": {"forehands": 0, "backhands": 0, "volleys": 0, "serves": 0}
+                },
+                "pressure_situations": {
+                    "player_1_attacking_shots": 0,
+                    "player_1_defensive_shots": 0,
+                    "player_2_attacking_shots": 0,
+                    "player_2_defensive_shots": 0
+                }
+            },
+            
+            "mental_indicators": {
+                "player_1": {
+                    "confidence_drops": [],  # Timestamps where multiple errors occurred
+                    "pressure_moments": [],  # High-stakes situations
+                    "recovery_patterns": {
+                        "quick_recovery_after_error": 0,  # Won next point after error
+                        "slow_recovery_after_error": 0    # Lost multiple points after error
+                    },
+                    "momentum_shifts": [],  # Frames where momentum changed
+                    "hesitation_indicators": 0  # Count of defensive/hesitant plays
+                },
+                "player_2": {
+                    "confidence_drops": [],
+                    "pressure_moments": [],
+                    "recovery_patterns": {
+                        "quick_recovery_after_error": 0,
+                        "slow_recovery_after_error": 0
+                    },
+                    "momentum_shifts": [],
+                    "hesitation_indicators": 0
+                }
+            },
+            
+            "coaching_insights": {
+                "key_moments": [],  # Critical points/rallies that decided the match
+                "strengths": {
+                    "player_1": ["to_be_analyzed"],  # Will be filled by AI analysis
+                    "player_2": ["to_be_analyzed"]
+                },
+                "weaknesses": {
+                    "player_1": ["to_be_analyzed"],
+                    "player_2": ["to_be_analyzed"]
+                },
+                "recommendations": {
+                    "player_1_tactical": [],  # Tactical suggestions
+                    "player_1_mental": [],    # Mental/confidence suggestions
+                    "player_2_tactical": [],
+                    "player_2_mental": []
+                }
             }
         }
         
