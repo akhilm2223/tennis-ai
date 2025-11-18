@@ -17,6 +17,8 @@ export function VideoUpload({ onVideoProcessed }) {
   const [frameInfo, setFrameInfo] = useState({ current: 0, total: 0 })
   const [analysisLogs, setAnalysisLogs] = useState([])
   const [showLogs, setShowLogs] = useState(true)
+  const [analysisData, setAnalysisData] = useState(null)
+  const [showCoachingOptions, setShowCoachingOptions] = useState(false)
 
   useEffect(() => {
     // Connect to WebSocket
@@ -44,6 +46,16 @@ export function VideoUpload({ onVideoProcessed }) {
       if (data.status === 'complete') {
         setProcessing(false)
         setOutputFile(data.output_file)
+        // Load analysis data
+        if (data.analysis_file) {
+          fetch(`${API_URL}/api/download/${data.analysis_file}`)
+            .then(res => res.json())
+            .then(json => {
+              setAnalysisData(json)
+              setShowCoachingOptions(true)
+            })
+            .catch(err => console.error('Failed to load analysis:', err))
+        }
         if (onVideoProcessed) {
           onVideoProcessed(data.output_file)
         }
@@ -201,6 +213,20 @@ export function VideoUpload({ onVideoProcessed }) {
     }
   }
 
+  const handleLoadOldAnalysis = async () => {
+    setMessage('Loading previous analysis...')
+    try {
+      const response = await fetch(`${API_URL}/api/download/tennis_analysis_trail_analysis.json`)
+      const json = await response.json()
+      setAnalysisData(json)
+      setShowCoachingOptions(true)
+      setOutputFile('tennis_analysis_trail.avi')
+      setMessage('Analysis loaded successfully!')
+    } catch (error) {
+      setMessage(`Failed to load analysis: ${error.message}`)
+    }
+  }
+
   return (
     <div className="video-upload-container">
       <div className="upload-card">
@@ -235,13 +261,21 @@ export function VideoUpload({ onVideoProcessed }) {
         <button
           onClick={handleQuickProcess}
           disabled={processing}
-          className="upload-button"
-          style={{ marginTop: '10px', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}
+          className="upload-button secondary"
         >
-          ⚡ Quick Process (Local File)
+          Quick Process (Test File)
         </button>
 
-        {(uploading || processing) && (
+        {/* Load old analysis button */}
+        <button
+          onClick={handleLoadOldAnalysis}
+          disabled={processing}
+          className="upload-button secondary"
+        >
+          Load Previous Analysis
+        </button>
+
+        {(uploading || processing) && !showCoachingOptions && (
           <div className="progress-container">
             <div className="progress-bar">
               <div 
@@ -249,7 +283,54 @@ export function VideoUpload({ onVideoProcessed }) {
                 style={{ width: `${progress}%` }}
               />
             </div>
-            <p className="progress-text">{progress}%</p>
+            <p className="progress-text">{message || `${progress}%`}</p>
+          </div>
+        )}
+
+        {showCoachingOptions && analysisData && (
+          <div style={{ marginTop: '24px', padding: '20px', background: '#f8f9fa', borderRadius: '12px' }}>
+            <h3 style={{ fontSize: '18px', marginBottom: '16px', color: '#1a1a1a', fontWeight: '700' }}>
+              Analysis Complete
+            </h3>
+            
+            <div style={{ marginBottom: '20px', textAlign: 'left', color: '#374151', fontSize: '14px' }}>
+              <p><strong>Match Duration:</strong> {analysisData.video_info?.duration_seconds?.toFixed(1)}s</p>
+              <p><strong>Total Bounces:</strong> {analysisData.bounces?.length || 0}</p>
+              <p><strong>Rallies:</strong> {analysisData.rallies?.length || 0}</p>
+              <p><strong>Score:</strong> {analysisData.score?.player_1} - {analysisData.score?.player_2}</p>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <button 
+                className="upload-button"
+                onClick={handleDownload}
+                style={{ marginBottom: '12px' }}
+              >
+                View Analyzed Video
+              </button>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <h4 style={{ fontSize: '16px', marginBottom: '12px', color: '#1a1a1a', fontWeight: '600' }}>
+                Get Coaching Feedback
+              </h4>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button 
+                  className="upload-button secondary"
+                  onClick={() => alert('Voice coaching coming soon! Will be added to GitHub.')}
+                  style={{ flex: 1 }}
+                >
+                  Voice
+                </button>
+                <button 
+                  className="upload-button secondary"
+                  onClick={() => alert('Text coaching coming soon! Will be added to GitHub.')}
+                  style={{ flex: 1 }}
+                >
+                  Text
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

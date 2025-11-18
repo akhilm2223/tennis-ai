@@ -233,6 +233,40 @@ function App() {
         </Canvas>
       </div>
       
+      {/* MindServe Logo - Clean & Minimal */}
+      {!showUpload && !showTraining && !showMentalCoach && (
+        <div style={{
+          position: 'fixed',
+          top: '40px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          textAlign: 'center',
+          zIndex: 1000
+        }}>
+          <h1 style={{
+            fontSize: 'clamp(32px, 5vw, 56px)',
+            fontWeight: '700',
+            color: '#ffffff',
+            margin: 0,
+            padding: '10px',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            letterSpacing: '-1px'
+          }}>
+            MindServe
+          </h1>
+          <p style={{
+            color: 'rgba(255, 255, 255, 0.6)',
+            fontSize: 'clamp(13px, 1.8vw, 16px)',
+            margin: '8px 0 0 0',
+            fontWeight: '400',
+            letterSpacing: '0.5px',
+            textTransform: 'uppercase'
+          }}>
+            Your Tennis Coach
+          </p>
+        </div>
+      )}
+
       {/* Speech text - bottom of screen */}
       {currentMessage && (
         <div style={{
@@ -259,77 +293,73 @@ function App() {
         </div>
       )}
 
-      {/* Navigation Buttons */}
+      {/* Navigation Buttons - Clean UI */}
       {!showUpload && !showTraining && !showMentalCoach && (
         <div style={{
           position: 'fixed',
-          bottom: '30px',
+          bottom: '40px',
           left: '50%',
           transform: 'translateX(-50%)',
           display: 'flex',
-          gap: '20px',
-          zIndex: 1000,
-          flexWrap: 'wrap',
-          justifyContent: 'center'
+          gap: '15px',
+          zIndex: 1000
         }}>
           <button
             onClick={() => setShowUpload(true)}
             style={{
-              padding: '15px 30px',
-              fontSize: '18px',
-              fontWeight: 'bold',
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '50px',
+              padding: '16px 32px',
+              fontSize: '16px',
+              fontWeight: '600',
+              background: 'rgba(255, 255, 255, 0.95)',
+              color: '#1a1a1a',
+              border: '1px solid rgba(0, 0, 0, 0.1)',
+              borderRadius: '12px',
               cursor: 'pointer',
-              boxShadow: '0 4px 15px rgba(102, 126, 234, 0.4)',
-              transition: 'transform 0.2s'
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+              transition: 'all 0.2s ease',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
             }}
-            onMouseEnter={(e) => e.target.style.transform = 'scale(1.05)'}
-            onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
+            onMouseEnter={(e) => {
+              e.target.style.background = 'rgba(255, 255, 255, 1)'
+              e.target.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)'
+              e.target.style.transform = 'translateY(-2px)'
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.background = 'rgba(255, 255, 255, 0.95)'
+              e.target.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)'
+              e.target.style.transform = 'translateY(0)'
+            }}
           >
-            🎥 Video Analysis
+            Video Analysis
           </button>
           
           <button
-            onClick={() => setShowTraining(true)}
-            style={{
-              padding: '15px 30px',
-              fontSize: '18px',
-              fontWeight: 'bold',
-              background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '50px',
-              cursor: 'pointer',
-              boxShadow: '0 4px 15px rgba(245, 87, 108, 0.4)',
-              transition: 'transform 0.2s'
-            }}
-            onMouseEnter={(e) => e.target.style.transform = 'scale(1.05)'}
-            onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
-          >
-            🧠 Training & Coaching
-          </button>
-
-          <button
             onClick={() => setShowMentalCoach(true)}
             style={{
-              padding: '15px 30px',
-              fontSize: '18px',
-              fontWeight: 'bold',
-              background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '50px',
+              padding: '16px 32px',
+              fontSize: '16px',
+              fontWeight: '600',
+              background: 'rgba(255, 255, 255, 0.95)',
+              color: '#1a1a1a',
+              border: '1px solid rgba(0, 0, 0, 0.1)',
+              borderRadius: '12px',
               cursor: 'pointer',
-              boxShadow: '0 4px 15px rgba(79, 172, 254, 0.4)',
-              transition: 'transform 0.2s'
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+              transition: 'all 0.2s ease',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
             }}
-            onMouseEnter={(e) => e.target.style.transform = 'scale(1.05)'}
-            onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
+            onMouseEnter={(e) => {
+              e.target.style.background = 'rgba(255, 255, 255, 1)'
+              e.target.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)'
+              e.target.style.transform = 'translateY(-2px)'
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.background = 'rgba(255, 255, 255, 0.95)'
+              e.target.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)'
+              e.target.style.transform = 'translateY(0)'
+            }}
           >
-            🎾 Mental Coaching for Tennis
+            Mental Coaching
           </button>
         </div>
       )}
@@ -370,43 +400,7 @@ function App() {
         </div>
       )}
 
-      {/* Mental Coach Modal */}
-      {showTraining && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          animation: 'zoomIn 1s ease-out',
-          width: '100%',
-          height: '100%',
-          zIndex: 2000
-        }}>
-          <MentalCoach />
-          
-          <button 
-            onClick={() => setShowTraining(false)}
-            style={{
-              position: 'fixed',
-              top: '20px',
-              right: '20px',
-              padding: '10px 20px',
-              fontSize: '16px',
-              fontWeight: 'bold',
-              background: 'rgba(255, 255, 255, 0.2)',
-              color: 'white',
-              border: '2px solid white',
-              borderRadius: '50px',
-              cursor: 'pointer',
-              zIndex: 3000,
-              backdropFilter: 'blur(10px)'
-            }}
-          >
-            ✕ Close
-          </button>
-        </div>
-      )}
-
-      {/* Mental Coaching for Tennis Modal */}
+      {/* Mental Coaching Modal */}
       {showMentalCoach && (
         <div style={{
           position: 'fixed',
