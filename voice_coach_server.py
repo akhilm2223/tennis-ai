@@ -150,19 +150,25 @@ def coach_voice_chat():
             
             # Transcribe audio using Google Speech Recognition
             recognizer = sr.Recognizer()
+            
+            # Adjust recognizer settings for better accuracy
+            recognizer.energy_threshold = 300  # Lower threshold for quieter audio
+            recognizer.dynamic_energy_threshold = True
+            recognizer.pause_threshold = 0.8  # Seconds of silence to consider end of phrase
+            
             with sr.AudioFile(wav_path) as source:
-                # Adjust for ambient noise
-                recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                # Adjust for ambient noise with longer duration
+                recognizer.adjust_for_ambient_noise(source, duration=1.0)
                 audio_data = recognizer.record(source)
             
-            # Transcribe
+            # Transcribe with language hint
             try:
-                query = recognizer.recognize_google(audio_data)
+                query = recognizer.recognize_google(audio_data, language='en-US', show_all=False)
                 print(f"📝 Transcribed: {query}")
             except sr.UnknownValueError:
                 return jsonify({
                     'success': False,
-                    'error': 'Could not understand audio. Please speak more clearly.'
+                    'error': 'Could not understand audio. Try speaking louder, slower, or closer to the microphone.'
                 }), 400
             except sr.RequestError as e:
                 return jsonify({
@@ -269,16 +275,13 @@ def coach_voice_chat():
             if os.path.exists(wav_path):
                 os.unlink(wav_path)
             
-            # Return audio file
+            # Return audio file with full text in headers (no truncation)
             # Sanitize header values (remove newlines and non-ASCII characters)
             sanitized_query = query.replace('\n', ' ').replace('\r', ' ') if query else ''
             sanitized_query = sanitize_header_value(sanitized_query)
             
-            # Include full response text (or at least more of it)
+            # Include FULL response text (no truncation)
             sanitized_response = response_text.replace('\n', ' ').replace('\r', ' ') if response_text else ''
-            # Truncate if too long for header (HTTP headers have size limits)
-            if len(sanitized_response) > 8000:
-                sanitized_response = sanitized_response[:7997] + "..."
             sanitized_response = sanitize_header_value(sanitized_response)
             
             # Sanitize sources header
@@ -290,7 +293,7 @@ def coach_voice_chat():
                 headers={
                     'Content-Disposition': 'attachment; filename=coach_response.mp3',
                     'X-Transcribed-Text': sanitized_query,
-                    'X-Response-Text': sanitized_response,  # Full response text
+                    'X-Response-Text': sanitized_response,  # FULL response text (no truncation)
                     'X-Sources': sanitized_sources  # JSON array of sources
                 }
             )

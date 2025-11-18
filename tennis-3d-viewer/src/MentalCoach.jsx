@@ -13,6 +13,8 @@ export function MentalCoach() {
   const [showTranscript, setShowTranscript] = useState(false)
   const [showResponse, setShowResponse] = useState(false)
   const [showAudioPlayer, setShowAudioPlayer] = useState(false)
+  const [isCoachSpeaking, setIsCoachSpeaking] = useState(false)
+  const [audioVisualizerData, setAudioVisualizerData] = useState(Array(20).fill(0))
 
   const mediaRecorderRef = useRef(null)
   const audioChunksRef = useRef([])
@@ -20,6 +22,8 @@ export function MentalCoach() {
   const timerIntervalRef = useRef(null)
   const audioElementRef = useRef(null)
   const audioUrlRef = useRef(null)
+  const analyzerRef = useRef(null)
+  const animationFrameRef = useRef(null)
 
   const handleRecordingStop = useCallback(async () => {
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' })
@@ -49,6 +53,16 @@ export function MentalCoach() {
       const transcribedText = response.headers.get('X-Transcribed-Text')
       const responseTextHeader = response.headers.get('X-Response-Text')
 
+      console.log('=== COACH RESPONSE DEBUG ===')
+      console.log('Transcribed Text:', transcribedText)
+      console.log('Response Text (full):', responseTextHeader)
+      console.log('Response Text Length:', responseTextHeader?.length || 0)
+      console.log('All Response Headers:')
+      for (let [key, value] of response.headers.entries()) {
+        console.log(`  ${key}: ${value}`)
+      }
+      console.log('===========================')
+
       if (transcribedText) {
         setTranscript(transcribedText)
         setShowTranscript(true)
@@ -57,6 +71,8 @@ export function MentalCoach() {
       if (responseTextHeader) {
         setResponse(responseTextHeader)
         setShowResponse(true)
+      } else {
+        console.warn('⚠️ No X-Response-Text header found in response')
       }
 
       // Get audio blob
@@ -65,8 +81,8 @@ export function MentalCoach() {
       setAudioUrl(url)
       audioUrlRef.current = url
       setShowAudioPlayer(true)
-
-      setStatus('processing')
+      
+      console.log('Audio response received, setting up playback...')
       
       setError('')
 
@@ -118,29 +134,63 @@ export function MentalCoach() {
 
   // Handle audio playback when audioUrl is set
   useEffect(() => {
-    if (audioUrl && audioElementRef.current) {
-      audioElementRef.current.src = audioUrl
-      audioElementRef.current.load()
+    if (!audioUrl) return
+    
+    const setupAudio = async () => {
+      if (!audioElementRef.current) return
       
-      // Small delay to ensure audio is loaded
-      setTimeout(() => {
-        if (audioElementRef.current) {
-          audioElementRef.current.play()
-            .then(() => {
-              console.log('Audio playing automatically')
-            })
-            .catch(err => {
-              console.warn('Autoplay prevented:', err)
-              // If autoplay fails, user can still click play button
-            })
+      try {
+        audioElementRef.current.src = audioUrl
+        await audioElementRef.current.load()
+        
+        // Create audio context for visualization
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+        const source = audioContext.createMediaElementAudioSource(audioElementRef.current)
+        const analyzer = audioContext.createAnalyser()
+        analyzer.fftSize = 256
+        source.connect(analyzer)
+        analyzer.connect(audioContext.destination)
+        analyzerRef.current = analyzer
+        
+        // Play audio
+        await audioElementRef.current.play()
+        console.log('Audio playing automatically')
+        setIsCoachSpeaking(true)
+        setStatus('ready') // Set to ready when audio starts playing
+        updateVisualizer()
+        
+        // Set up ended handler
+        audioElementRef.current.onended = () => {
+          setIsCoachSpeaking(false)
+          if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current)
+          }
         }
-      }, 100)
-      
-      audioElementRef.current.onended = () => {
-        setStatus('ready')
+      } catch (err) {
+        console.warn('Audio setup/playback error:', err)
+        setStatus('ready') // Set to ready even if autoplay fails
       }
     }
+    
+    setupAudio()
   }, [audioUrl])
+
+  // Update visualizer animation
+  const updateVisualizer = () => {
+    if (analyzerRef.current && audioElementRef.current && !audioElementRef.current.paused) {
+      const dataArray = new Uint8Array(analyzerRef.current.frequencyBinCount)
+      analyzerRef.current.getByteFrequencyData(dataArray)
+      
+      // Sample every nth value to get 20 bars
+      const step = Math.floor(dataArray.length / 20)
+      const sampledData = []
+      for (let i = 0; i < 20; i++) {
+        sampledData.push(dataArray[i * step] / 255)
+      }
+      setAudioVisualizerData(sampledData)
+      animationFrameRef.current = requestAnimationFrame(updateVisualizer)
+    }
+  }
 
   const startRecording = () => {
     if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'recording') {
@@ -286,15 +336,32 @@ export function MentalCoach() {
         )}
 
         {showResponse && (
-          <div className="response show">
-            <div className="response-label">Coach's Response:</div>
+          <div className={`response show ${isCoachSpeaking ? 'speaking' : ''}`}>
+            <div className="response-label">
+              {isCoachSpeaking ? '🗣️ Coach is speaking...' : "Coach's Response:"}
+            </div>
             <div>{response}</div>
           </div>
         )}
 
         {showAudioPlayer && audioUrl && (
           <div className="audio-player show">
-            <div className="audio-label">Coach's Voice Response:</div>
+            {/* Audio Visualizer */}
+            {isCoachSpeaking && (
+              <div className="audio-visualizer">
+                {audioVisualizerData.map((value, index) => (
+                  <div
+                    key={index}
+                    className="visualizer-bar"
+                    style={{
+                      height: `${Math.max(5, value * 100)}%`,
+                      animation: isCoachSpeaking ? 'none' : 'none'
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+            
             <audio 
               ref={audioElementRef}
               controls

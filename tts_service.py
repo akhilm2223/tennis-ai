@@ -6,7 +6,7 @@ Handles TTS initialization and audio generation
 import os
 
 # Default voice settings
-DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"  # Adam voice
+DEFAULT_VOICE_ID = "Fc5CaIGWKvLHapoOSM2K"  
 DEFAULT_VOICE_MODEL = "eleven_turbo_v2_5"
 
 # Global state

@@ -26,7 +26,7 @@ if not google_api_key:
 
 genai.configure(api_key=google_api_key)
 
-# Anthropic API key (for Claude 4 Sonnet)
+# Anthropic API key (for Claude Haiku 4.5)
 anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
 if not anthropic_api_key:
     raise ValueError("Missing ANTHROPIC_API_KEY in .env")
@@ -43,11 +43,11 @@ knowledge_index = pinecone_client.Index(INDEX_NAME)
 # ============================================================
 
 class MentalCoachChatbot:
-    """RAG chatbot for mental coaching using Pinecone + Claude 4 Sonnet."""
+    """RAG chatbot for mental coaching using Pinecone + Claude Haiku 4.5."""
 
     def __init__(self):
-        # Use Claude 4 Sonnet for text generation
-        self.model_name = "claude-4-sonnet-20250514"  # Claude Sonnet 4
+        # Use Claude 3.5 Haiku for text generation (faster and more cost-effective)
+        self.model_name = "claude-3-5-haiku-20241022"  # Claude 3.5 Haiku
         self.client = anthropic_client
 
     # --------------------------------------------------------
