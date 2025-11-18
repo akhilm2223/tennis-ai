@@ -4,6 +4,7 @@ Simple Flask server for voice-based mental coaching
 """
 
 import os
+import time
 import dotenv
 dotenv.load_dotenv()
 
@@ -49,6 +50,16 @@ except Exception as e:
     SPEECH_RECOGNITION_AVAILABLE = False
     print(f"⚠️  Warning: Could not initialize Speech Recognition: {e}")
 
+# Initialize Galileo MCP service
+try:
+    from galileo_mcp_service import initialize_galileo, is_available as galileo_is_available, log_coach_interaction
+    initialize_galileo()
+    GALILEO_AVAILABLE = galileo_is_available()
+except Exception as e:
+    GALILEO_AVAILABLE = False
+    print(f"⚠️  Warning: Could not import Galileo MCP service: {e}")
+    log_coach_interaction = None
+
 
 def sanitize_header_value(value):
     """
@@ -84,7 +95,8 @@ def health_check():
         'status': 'healthy',
         'coach_available': COACH_AVAILABLE,
         'tts_available': ELEVENLABS_AVAILABLE,
-        'stt_available': SPEECH_RECOGNITION_AVAILABLE
+        'stt_available': SPEECH_RECOGNITION_AVAILABLE,
+        'galileo_available': GALILEO_AVAILABLE
     })
 
 
@@ -181,9 +193,15 @@ def coach_voice_chat():
             if not session_id or session_id.strip() == '':
                 session_id = 'default'
             
+            # Track response time for Galileo logging
+            start_time = time.time()
+            
             # Get RAG response with conversation memory
             context_items = coach_chatbot.search_pinecone(query)
             response_text = coach_chatbot.generate_response(query, context_items, session_id=session_id)
+            
+            # Calculate response time
+            response_time_ms = (time.time() - start_time) * 1000
             
             if not response_text:
                 return jsonify({
@@ -191,7 +209,7 @@ def coach_voice_chat():
                     'error': 'Could not generate response'
                 }), 500
             
-            print(f"🤖 Generated response: {response_text[:100]}...")
+            print(f"🤖 Generated response (full):\n{response_text}\n{'='*60}")
             
             # Extract sources from context_items
             sources_list = []
@@ -259,6 +277,19 @@ def coach_voice_chat():
                 if source.get('url'):
                     source_str += f" | {source['url']}"
                 print(source_str)
+            
+            # Log to Galileo MCP if available
+            if GALILEO_AVAILABLE and log_coach_interaction:
+                try:
+                    log_coach_interaction(
+                        query=query,
+                        response=response_text,
+                        sources=sources_list,
+                        session_id=session_id,
+                        response_time_ms=response_time_ms
+                    )
+                except Exception as e:
+                    print(f"⚠️  Galileo logging error: {e}")
             
             # Generate speech using ElevenLabs TTS service
             # For TTS, use only the response text without sources section (sources are separated in the text)
@@ -349,11 +380,17 @@ def coach_chat():
         if not session_id or session_id.strip() == '':
             session_id = 'default'
         
+        # Track response time for Galileo logging
+        start_time = time.time()
+        
         # Search for relevant content
         context_items = coach_chatbot.search_pinecone(query)
         
         # Generate response with conversation memory
         response = coach_chatbot.generate_response(query, context_items, session_id=session_id)
+        
+        # Calculate response time
+        response_time_ms = (time.time() - start_time) * 1000
         
         # Extract and log sources used in the response
         if context_items:
@@ -396,6 +433,47 @@ def coach_chat():
                 print(source_str)
         else:
             print("📚 No sources found for this query")
+        
+        # Extract sources for Galileo logging
+        sources_list = []
+        if context_items:
+            for item in context_items:
+                source_info = {
+                    'title': (
+                        item.get("book_title")
+                        or item.get("article_title")
+                        or item.get("podcast_title")
+                        or item.get("interview_title")
+                        or item.get("youtube_title")
+                        or item.get("title")
+                        or "Unknown Source"
+                    ),
+                    'type': item.get('content_type', 'Unknown')
+                }
+                author = (
+                    item.get("book_author")
+                    or item.get("article_author")
+                    or item.get("author")
+                    or item.get("host")
+                    or item.get("channel_name")
+                    or None
+                )
+                if author:
+                    source_info['author'] = author
+                sources_list.append(source_info)
+        
+        # Log to Galileo MCP if available
+        if GALILEO_AVAILABLE and log_coach_interaction:
+            try:
+                log_coach_interaction(
+                    query=query,
+                    response=response,
+                    sources=sources_list,
+                    session_id=session_id,
+                    response_time_ms=response_time_ms
+                )
+            except Exception as e:
+                print(f"⚠️  Galileo logging error: {e}")
         
         if response:
             return jsonify({
