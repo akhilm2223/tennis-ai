@@ -30,9 +30,6 @@ pinecone-client
 google-generativeai
 anthropic
 
-# Galileo MCP integration
-requests
-
 # Audio processing (required by pydub)
 # Note: Also requires FFmpeg to be installed on system
 # macOS: brew install ffmpeg

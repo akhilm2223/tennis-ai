@@ -21,6 +21,12 @@ import threading
 import time
 from werkzeug.utils import secure_filename
 import base64
+import json
+import sys
+import io
+
+# Import the streaming version with callback for frame previews
+from main_pose_streaming import main_with_callback
 
 
 app = Flask(__name__)
@@ -48,24 +54,16 @@ def allowed_file(filename):
 
 
 def process_video_with_updates(video_path, output_path, session_id):
-    """Process video and send real-time updates via WebSocket"""
+    """Process video with FULL analysis (same as main_pose.py)"""
     
-    # Prepare JSON analysis file
-    json_output_path = output_path.replace('.mp4', '_analysis.json')
-    analysis_data = {
-        'video_info': {},
-        'players': [],
-        'ball_tracking': [],
-        'bounces': [],
-        'court_detection': {},
-        'statistics': {}
-    }
+    # Prepare JSON analysis file - use session_id in filename for easy lookup
+    json_output_path = os.path.join(OUTPUT_FOLDER, f"analyzed_{session_id}_analysis.json")
     
     try:
         socketio.emit('processing_update', {
             'session_id': session_id,
             'status': 'starting',
-            'message': 'Initializing detectors...',
+            'message': 'Initializing FULL analysis (with rally tracking, statistics)...',
             'progress': 0
         })
         
@@ -78,14 +76,22 @@ def process_video_with_updates(video_path, output_path, session_id):
         socketio.emit('processing_update', {
             'session_id': session_id,
             'status': 'processing',
-            'message': f'Processing {total_frames} frames...',
-            'progress': 5,
+            'message': f'Running complete analysis on {total_frames} frames...',
+            'progress': 10,
             'total_frames': total_frames,
             'fps': fps
         })
         
-        # Progress callback for frame-by-frame updates
-        def on_frame_processed(frame_num, total, frame_image):
+        # DON'T capture stdout - let all messages print directly to console!
+        print(f"\n{'='*60}", flush=True)
+        print(f"🎾 STARTING FULL ANALYSIS", flush=True)
+        print(f"📁 Video: {video_path}", flush=True)
+        print(f"📊 Session: {session_id}", flush=True)
+        print(f"💾 Output: {output_path}", flush=True)
+        print(f"{'='*60}\n", flush=True)
+        
+        # Progress callback for frame-by-frame updates WITH video frames AND logs
+        def on_frame_processed(frame_num, total, frame_image, log_message=None):
             progress = int((frame_num / total) * 90) + 5  # 5-95%
             
             # Encode frame as JPEG for preview
@@ -96,6 +102,7 @@ def process_video_with_updates(video_path, output_path, session_id):
                 _, buffer = cv2.imencode('.jpg', small_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
                 frame_preview = base64.b64encode(buffer).decode('utf-8')
             
+            # Send frame preview update
             socketio.emit('processing_update', {
                 'session_id': session_id,
                 'status': 'processing',
@@ -105,65 +112,100 @@ def process_video_with_updates(video_path, output_path, session_id):
                 'total_frames': total,
                 'frame_preview': f'data:image/jpeg;base64,{frame_preview}' if frame_preview else None
             })
+            
+            # Send log message if provided
+            if log_message:
+                print(log_message, flush=True)
+                socketio.emit('analysis_log', {
+                    'session_id': session_id,
+                    'log': log_message,
+                    'timestamp': time.time()
+                })
         
-        # Process video with callback and get analysis data
-        result = main_with_callback(
-            video_path=video_path,
-            output_path=output_path,
-            calibrate=True,
-            use_pose=True,
-            show_bbox=False,
-            progress_callback=on_frame_processed
-        )
+        try:
+            print(f"🎬 Processing video with frame previews...", flush=True)
+            
+            # Process video with callback for frame previews
+            result = main_with_callback(
+                video_path=video_path,
+                output_path=output_path,
+                calibrate=True,
+                use_pose=True,
+                show_bbox=False,
+                progress_callback=on_frame_processed
+            )
+            
+            terminal_output = "Analysis complete"
+            print(f"\n{'='*60}", flush=True)
+            print(f"✅ Analysis completed successfully!", flush=True)
+            print(f"{'='*60}\n", flush=True)
+            
+        except Exception as e:
+            raise e
         
-        # Save analysis JSON
-        if result:
-            analysis_data['video_info'] = {
-                'path': video_path,
-                'output': output_path,
-                'fps': result.get('fps', fps),
-                'total_frames': result.get('frames_processed', total_frames),
-                'duration_seconds': result.get('frames_processed', total_frames) / fps
+        # Look for the generated JSON file (main_pose.py creates it)
+        # Check multiple possible locations
+        possible_json_paths = [
+            output_path.replace('.mp4', '_analysis.json'),
+            output_path.replace('.avi', '_analysis.json'),
+            os.path.join(OUTPUT_FOLDER, os.path.basename(output_path).replace('.mp4', '_analysis.json')),
+            json_output_path
+        ]
+        
+        analysis_data = None
+        for json_path in possible_json_paths:
+            if os.path.exists(json_path):
+                print(f"✅ Found analysis JSON: {json_path}")
+                with open(json_path, 'r') as f:
+                    analysis_data = json.load(f)
+                
+                # Copy to session-specific location
+                if json_path != json_output_path:
+                    with open(json_output_path, 'w') as f:
+                        json.dump(analysis_data, f, indent=2)
+                    print(f"✅ Copied to: {json_output_path}")
+                break
+        
+        # Extract stats from analysis data
+        stats = {}
+        if analysis_data:
+            stats = {
+                'player_stats': analysis_data.get('player_stats', {}),
+                'rallies': len(analysis_data.get('rallies', [])),
+                'bounces': len(analysis_data.get('bounces', [])),
+                'score': analysis_data.get('score', {}),
+                'match_summary': analysis_data.get('match_summary', {})
             }
-            
-            analysis_data['statistics'] = {
-                'max_ball_speed_kmh': result.get('max_ball_speed', 0),
-                'max_player_speeds_kmh': result.get('max_player_speeds', {}),
-                'total_bounces': len(result.get('bounces', [])),
-                'court_detected': result.get('court_detected', False)
-            }
-            
-            analysis_data['bounces'] = result.get('bounces', [])
-            analysis_data['ball_tracking'] = result.get('ball_trajectory', [])
-            
-            # Write JSON file
-            import json
-            with open(json_output_path, 'w') as f:
-                json.dump(analysis_data, f, indent=2)
-            
-            print(f"✅ Analysis JSON saved: {json_output_path}")
         
         socketio.emit('processing_update', {
             'session_id': session_id,
             'status': 'complete',
-            'message': 'Processing complete!',
+            'message': 'Complete analysis finished! Video ready for download.',
             'progress': 100,
             'output_file': os.path.basename(output_path),
-            'stats': result
+            'stats': stats,
+            'terminal_output': terminal_output[:500]  # First 500 chars
         })
         
         processing_status[session_id] = 'complete'
+        print(f"\n{'='*60}", flush=True)
+        print(f"✅ ANALYSIS COMPLETE!", flush=True)
+        print(f"📊 Session: {session_id}", flush=True)
+        print(f"🎬 Video: {output_path}", flush=True)
+        print(f"📄 JSON: {json_output_path}", flush=True)
+        print(f"{'='*60}\n", flush=True)
         
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
-        print(f"Error processing video: {error_details}")
+        print(f"❌ Error processing video: {error_details}")
         
         socketio.emit('processing_update', {
             'session_id': session_id,
             'status': 'error',
             'message': f'Error: {str(e)}',
-            'progress': 0
+            'progress': 0,
+            'error_details': error_details
         })
         processing_status[session_id] = 'error'
 
@@ -177,7 +219,7 @@ def process_local_file():
     if not file_path or not os.path.exists(file_path):
         return jsonify({'error': 'Invalid file path', 'success': False}), 400
     
-    print(f"📁 Processing local file: {file_path}")
+    print(f"\n📁 Processing local file: {file_path}", flush=True)
     
     # Generate output path
     timestamp = int(time.time())
@@ -293,6 +335,206 @@ def preview_frame(filename):
     return jsonify({'error': 'Could not generate preview'}), 404
 
 
+@app.route('/api/analysis/<session_id>', methods=['GET'])
+def get_analysis(session_id):
+    """Get analysis JSON for a session"""
+    # Try to find analysis JSON file
+    json_filename = f"analyzed_{session_id}_analysis.json"
+    json_path = os.path.join(OUTPUT_FOLDER, json_filename)
+    
+    # Also try alternative naming patterns
+    if not os.path.exists(json_path):
+        # Look for any JSON file with session_id in name
+        import glob
+        pattern = os.path.join(OUTPUT_FOLDER, f"*{session_id}*analysis.json")
+        matches = glob.glob(pattern)
+        if matches:
+            json_path = matches[0]
+    
+    if os.path.exists(json_path):
+        import json
+        with open(json_path, 'r') as f:
+            analysis_data = json.load(f)
+        return jsonify({
+            'success': True,
+            'analysis': analysis_data
+        })
+    
+    return jsonify({'error': 'Analysis not found', 'success': False}), 404
+
+
+@app.route('/api/coach/analyze-match', methods=['POST'])
+def analyze_match_with_coach():
+    """Get mental coaching advice based on video analysis"""
+    try:
+        # Try to import coach
+        from RAG_MentalCoach.coach.coach import MentalCoachChatbot
+        coach = MentalCoachChatbot()
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Mental coach not available: {str(e)}. Check API keys and configuration.'
+        }), 503
+    
+    data = request.get_json()
+    session_id = data.get('session_id')
+    query = data.get('query', 'How can I improve my mental game based on this match?')
+    
+    if not session_id:
+        return jsonify({'error': 'session_id is required', 'success': False}), 400
+    
+    # Get analysis JSON
+    json_filename = f"analyzed_{session_id}_analysis.json"
+    json_path = os.path.join(OUTPUT_FOLDER, json_filename)
+    
+    # Try alternative patterns
+    if not os.path.exists(json_path):
+        import glob
+        pattern = os.path.join(OUTPUT_FOLDER, f"*{session_id}*analysis.json")
+        matches = glob.glob(pattern)
+        if matches:
+            json_path = matches[0]
+    
+    video_analysis = None
+    if os.path.exists(json_path):
+        import json
+        with open(json_path, 'r') as f:
+            video_analysis = json.load(f)
+    else:
+        # If no analysis file, try to get from request
+        video_analysis = data.get('video_analysis')
+        if not video_analysis:
+            return jsonify({
+                'error': 'Analysis not found. Please provide session_id or video_analysis data.',
+                'success': False
+            }), 404
+    
+    try:
+        # Search knowledge base
+        context_items = coach.search_pinecone(query)
+        
+        # Generate response with video analysis context
+        response = coach.generate_response(
+            query=query,
+            context_items=context_items,
+            session_id=session_id,
+            video_analysis=video_analysis
+        )
+        
+        # Extract key stats for response
+        player_1_stats = video_analysis.get('player_stats', {}).get('1', {})
+        player_2_stats = video_analysis.get('player_stats', {}).get('2', {})
+        
+        return jsonify({
+            'success': True,
+            'response': response,
+            'video_stats': {
+                'player_1': {
+                    'errors': player_1_stats.get('errors', 0),
+                    'winners': player_1_stats.get('winners', 0),
+                    'points_won': player_1_stats.get('points_won', 0),
+                    'avg_speed_kmh': player_1_stats.get('avg_shot_speed_kmh', 0)
+                },
+                'player_2': {
+                    'errors': player_2_stats.get('errors', 0),
+                    'winners': player_2_stats.get('winners', 0),
+                    'points_won': player_2_stats.get('points_won', 0),
+                    'avg_speed_kmh': player_2_stats.get('avg_shot_speed_kmh', 0)
+                },
+                'total_rallies': len(video_analysis.get('rallies', [])),
+                'max_ball_speed_kmh': video_analysis.get('statistics', {}).get('max_ball_speed_kmh', 0)
+            },
+            'sources_count': len(context_items) if context_items else 0
+        })
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in match analysis coaching: {error_details}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/daytona/execute', methods=['POST'])
+def execute_daytona_code():
+    """Execute Python code securely in a Daytona sandbox"""
+    try:
+        from daytona_integration import get_daytona_executor
+        
+        executor = get_daytona_executor()
+        if not executor:
+            return jsonify({
+                'success': False,
+                'error': 'Daytona not configured. Set DAYTONA_API_KEY environment variable.'
+            }), 503
+        
+        data = request.get_json()
+        code = data.get('code')
+        sandbox_id = data.get('sandbox_id')  # Optional: reuse existing sandbox
+        
+        if not code:
+            return jsonify({'error': 'Code is required', 'success': False}), 400
+        
+        # Execute code in sandbox
+        result = executor.execute_code(code, sandbox_id)
+        
+        return jsonify({
+            'success': result['exit_code'] == 0,
+            'exit_code': result['exit_code'],
+            'result': result['result'],
+            'sandbox_id': result['sandbox_id'],
+            'error': result['error']
+        })
+        
+    except ImportError:
+        return jsonify({
+            'success': False,
+            'error': 'Daytona SDK not installed. Install with: pip install daytona'
+        }), 503
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error executing Daytona code: {error_details}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/daytona/sandbox/<sandbox_id>', methods=['DELETE'])
+def delete_daytona_sandbox(sandbox_id):
+    """Delete a Daytona sandbox"""
+    try:
+        from daytona_integration import get_daytona_executor
+        
+        executor = get_daytona_executor()
+        if not executor:
+            return jsonify({
+                'success': False,
+                'error': 'Daytona not configured. Set DAYTONA_API_KEY environment variable.'
+            }), 503
+        
+        success = executor.delete_sandbox(sandbox_id)
+        
+        return jsonify({
+            'success': success,
+            'message': 'Sandbox deleted' if success else 'Sandbox not found'
+        })
+        
+    except ImportError:
+        return jsonify({
+            'success': False,
+            'error': 'Daytona SDK not installed. Install with: pip install daytona'
+        }), 503
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @socketio.on('connect')
 def handle_connect():
     print('Client connected')
@@ -307,8 +549,8 @@ def handle_disconnect():
 if __name__ == '__main__':
     import sys
     
-    # Get port from environment variable or use default
-    port = int(os.environ.get('PORT', 6000))
+    # Get port from environment variable or use default (5001 - safe port)
+    port = int(os.environ.get('PORT', 5001))
     host = os.environ.get('HOST', '0.0.0.0')
     
     print("🎾 Tennis Analysis Server Starting...")
@@ -322,7 +564,7 @@ if __name__ == '__main__':
             print(f"❌ Error: Port {port} is already in use.")
             print(f"💡 Try one of these solutions:")
             print(f"   1. Kill the process using port {port}: lsof -ti:{port} | xargs kill -9")
-            print(f"   2. Use a different port: PORT=5001 python backend_server.py")
+            print(f"   2. Use a different port: PORT=5002 python backend_server.py")
             sys.exit(1)
         else:
             raise

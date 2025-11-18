@@ -173,13 +173,67 @@ class MentalCoachChatbot:
     # --------------------------------------------------------
     # LLM Response Generation
     # --------------------------------------------------------
-    def generate_response(self, query: str, context_items, session_id: str = "default"):
+    def generate_response(self, query: str, context_items, session_id: str = "default", video_analysis=None):
+        """
+        Generate response with optional video analysis context.
+        
+        Args:
+            query: The athlete's question
+            context_items: RAG context from knowledge base
+            session_id: Session identifier
+            video_analysis: Optional dict containing video analysis data (JSON from match analysis)
+        """
+        # Build video context if available
+        video_context = ""
+        if video_analysis:
+            try:
+                player_1_stats = video_analysis.get('player_stats', {}).get('1', {})
+                player_2_stats = video_analysis.get('player_stats', {}).get('2', {})
+                rallies = video_analysis.get('rallies', [])
+                statistics = video_analysis.get('statistics', {})
+                video_info = video_analysis.get('video_info', {})
+                
+                video_context = f"""
+
+MATCH PERFORMANCE DATA:
+- Match Duration: {video_info.get('duration_seconds', 0):.1f} seconds ({video_info.get('total_frames', 0)} frames)
+- Total Rallies: {len(rallies)}
+- Score: Player 1 = {video_analysis.get('score', {}).get('player_1', 0)}, Player 2 = {video_analysis.get('score', {}).get('player_2', 0)}
+
+PLAYER 1 PERFORMANCE:
+- Average Shot Speed: {player_1_stats.get('avg_shot_speed_kmh', 0):.1f} km/h
+- Maximum Shot Speed: {player_1_stats.get('max_shot_speed_kmh', 0):.1f} km/h
+- Winners: {player_1_stats.get('winners', 0)}
+- Errors (Unforced + Forced): {player_1_stats.get('errors', 0)}
+- Points Won: {player_1_stats.get('points_won', 0)}
+- Total Shots: {player_1_stats.get('total_shots', 0)}
+
+PLAYER 2 PERFORMANCE:
+- Average Shot Speed: {player_2_stats.get('avg_shot_speed_kmh', 0):.1f} km/h
+- Maximum Shot Speed: {player_2_stats.get('max_shot_speed_kmh', 0):.1f} km/h
+- Winners: {player_2_stats.get('winners', 0)}
+- Errors (Unforced + Forced): {player_2_stats.get('errors', 0)}
+- Points Won: {player_2_stats.get('points_won', 0)}
+- Total Shots: {player_2_stats.get('total_shots', 0)}
+
+MATCH STATISTICS:
+- Maximum Ball Speed: {statistics.get('max_ball_speed_kmh', 0):.1f} km/h
+- Player 1 Max Speed: {statistics.get('max_player1_speed_kmh', 0):.1f} km/h
+- Player 2 Max Speed: {statistics.get('max_player2_speed_kmh', 0):.1f} km/h
+
+Use this performance data to provide specific, actionable mental coaching advice. Connect the technical performance metrics to mental game strategies.
+"""
+            except Exception as e:
+                print(f"Warning: Could not format video analysis context: {e}")
+                video_context = ""
+        
         if not context_items:
             prompt = f"""
 You are an experienced mental performance coach for athletes.
 The athlete asked: {query}
+{video_context}
 
-Use your knowledge to provide helpful advice. Be supportive and give actionable guidance.
+Use your knowledge to provide helpful advice. Be supportive and give actionable guidance. If video analysis data is provided, use it to give specific, personalized advice.
 """
             page_refs = []
         else:
@@ -191,8 +245,11 @@ Use the knowledge base context below when relevant, speak supportively, and give
 
 Knowledge Base Context:
 {context_text}
+{video_context}
 
 Athlete question: {query}
+
+When providing advice, reference specific performance metrics from the match data when relevant. For example, if the player made many errors, address error management. If speed decreased over time, discuss maintaining intensity and mental stamina.
 """
 
         try:
