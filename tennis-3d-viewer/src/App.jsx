@@ -201,25 +201,8 @@ function App() {
   }
 
   const handleUploadRequest = () => {
-    // Coach Q responds
-    const response = "Sure! Let me open the video upload interface for you!"
-    const utterance = new SpeechSynthesisUtterance(response)
-    utterance.rate = 0.9
-    utterance.pitch = 1.1
-    
-    setIsTalking(true)
-    setCurrentMessage(response)
-    
-    utterance.onend = () => {
-      setIsTalking(false)
-      setCurrentMessage('')
-      // Trigger zoom and show upload after speaking
-      setTimeout(() => {
-        setShowUpload(true)
-      }, 500)
-    }
-    
-    window.speechSynthesis.speak(utterance)
+    // Open video upload interface directly
+    setShowUpload(true)
   }
 
   return (
