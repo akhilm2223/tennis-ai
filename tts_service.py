@@ -26,17 +26,17 @@ def initialize_elevenlabs():
         if elevenlabs_api_key:
             _elevenlabs_client = ElevenLabs(api_key=elevenlabs_api_key)
             _elevenlabs_available = True
-            print("✅ ElevenLabs TTS initialized")
+            print("ElevenLabs TTS initialized")
             return True
         else:
             _elevenlabs_available = False
             _elevenlabs_client = None
-            print("⚠️  ELEVENLABS_API_KEY not found. Voice output disabled.")
+            print("Warning: ELEVENLABS_API_KEY not found. Voice output disabled.")
             return False
     except Exception as e:
         _elevenlabs_available = False
         _elevenlabs_client = None
-        print(f"⚠️  Warning: Could not initialize ElevenLabs: {e}")
+        print(f"Warning: Could not initialize ElevenLabs: {e}")
         return False
 
 
@@ -81,7 +81,7 @@ def text_to_speech(text, voice_id=DEFAULT_VOICE_ID, model_id=DEFAULT_VOICE_MODEL
                 text_for_tts = truncated[:last_space] + "..."
             else:
                 text_for_tts = truncated + "..."
-            print(f"⚠️  Text truncated to ~2 minutes of audio (from {len(text)} to {len(text_for_tts)} chars)")
+            print(f"Warning: Text truncated to ~2 minutes of audio (from {len(text)} to {len(text_for_tts)} chars)")
         
         # Generate speech using ElevenLabs
         audio_stream = _elevenlabs_client.text_to_speech.convert(
@@ -101,7 +101,7 @@ def text_to_speech(text, voice_id=DEFAULT_VOICE_ID, model_id=DEFAULT_VOICE_MODEL
         return audio_bytes
         
     except Exception as e:
-        print(f"⚠️  ElevenLabs TTS error: {e}")
+        print(f"Warning: ElevenLabs TTS error: {e}")
         return None
 
 

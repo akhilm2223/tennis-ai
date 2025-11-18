@@ -53,18 +53,11 @@
 .status.recording {
   background: #ffebee;
   color: #c62828;
-  animation: pulse 1s infinite;
 }
 
 .status.processing {
   background: #e3f2fd;
   color: #1565c0;
-  animation: pulse 1s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
 }
 
 .mic-button {
@@ -101,12 +94,6 @@
 .mic-button.recording {
   background: linear-gradient(135deg, #f44336 0%, #e91e63 100%);
   box-shadow: 0 10px 30px rgba(244, 67, 54, 0.4);
-  animation: recording-pulse 1s infinite;
-}
-
-@keyframes recording-pulse {
-  0%, 100% { box-shadow: 0 10px 30px rgba(244, 67, 54, 0.4); }
-  50% { box-shadow: 0 10px 40px rgba(244, 67, 54, 0.8); }
 }
 
 .timer {

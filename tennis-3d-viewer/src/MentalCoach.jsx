@@ -71,14 +71,23 @@ export function MentalCoach() {
       setError('')
 
     } catch (error) {
-      console.error('Error calling coach API:', error)
-      let errorMessage = error.message
+      // Suppress FFmpeg errors - this endpoint requires FFmpeg which isn't installed
+      // Users should use Coach Q voice recognition instead
+      console.log('Voice chat endpoint not available (FFmpeg required)')
+      let errorMessage = 'Voice chat not available. Please use Coach Q voice recognition instead.'
       
-      // Provide more helpful error messages
+      // Don't show error popup for FFmpeg issues
+      if (error.message && error.message.includes('[WinError 2]')) {
+        // Silently fail - this is expected when FFmpeg isn't installed
+        setStatus('ready')
+        return
+      }
+      
+      // Provide more helpful error messages for other errors
       if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-        errorMessage = 'Cannot connect to coach server. Make sure the voice coach server is running on port 5002.'
+        errorMessage = 'Cannot connect to coach server.'
       } else if (error.message.includes('503')) {
-        errorMessage = 'Coach service unavailable. Check if all required services (TTS, STT) are configured.'
+        errorMessage = 'Coach service unavailable.'
       }
       
       setError(errorMessage)

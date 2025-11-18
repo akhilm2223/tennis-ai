@@ -34,8 +34,14 @@ if not anthropic_api_key:
 anthropic_client = Anthropic(api_key=anthropic_api_key)
 
 pinecone_api_key = os.getenv("PINECONE_API_KEY")
-pinecone_client = Pinecone(api_key=pinecone_api_key)
-knowledge_index = pinecone_client.Index(INDEX_NAME)
+try:
+    pinecone_client = Pinecone(api_key=pinecone_api_key)
+    knowledge_index = pinecone_client.Index(INDEX_NAME)
+    print(f"✅ Connected to Pinecone index: {INDEX_NAME}")
+except Exception as e:
+    print(f"⚠️ Warning: Could not connect to Pinecone index '{INDEX_NAME}': {e}")
+    print("The chatbot will work without RAG knowledge retrieval.")
+    knowledge_index = None
 
 
 # ============================================================
@@ -77,6 +83,10 @@ class MentalCoachChatbot:
             query: The search query
             top_k: Number of results to retrieve
         """
+        if knowledge_index is None:
+            # RAG not available, return empty context
+            return []
+            
         vec = self.generate_query_embedding(query)
         if vec is None:
             return []
@@ -229,34 +239,32 @@ Use this performance data to provide specific, actionable mental coaching advice
         
         if not context_items:
             prompt = f"""
-You are an experienced mental performance coach for athletes.
-The athlete asked: {query}
+You're a supportive friend who knows about tennis psychology. Your friend said: {query}
 {video_context}
 
-Use your knowledge to provide helpful advice. Be supportive and give actionable guidance. If video analysis data is provided, use it to give specific, personalized advice.
+Respond like a caring friend - warm, conversational, and encouraging. Keep it BRIEF (2-3 sentences). Give ONE practical tip they can use right now. Sound natural and human, not formal or robotic.
 """
             page_refs = []
         else:
             context_text, page_refs = self._format_context(context_items)
             
             prompt = f"""
-You are an experienced mental performance coach for athletes.
-Use the knowledge base context below when relevant, speak supportively, and give actionable advice.
+You're a supportive friend who knows about tennis psychology. Use the knowledge base when relevant.
 
 Knowledge Base Context:
 {context_text}
 {video_context}
 
-Athlete question: {query}
+Your friend said: {query}
 
-When providing advice, reference specific performance metrics from the match data when relevant. For example, if the player made many errors, address error management. If speed decreased over time, discuss maintaining intensity and mental stamina.
+Respond like a caring friend - warm, conversational, and encouraging. Keep it BRIEF (2-3 sentences). Give ONE practical tip they can use right now. Sound natural and human, not formal or robotic. Use "you" and speak directly to them.
 """
 
         try:
             # Use Claude 4 Sonnet API
             message = self.client.messages.create(
                 model=self.model_name,
-                max_tokens=700,
+                max_tokens=150,  # Keep responses very short
                 temperature=0.7,
                 messages=[{
                     "role": "user",
@@ -274,13 +282,7 @@ When providing advice, reference specific performance metrics from the match dat
             if not text or text.strip() == "":
                 text = "I couldn't generate a response. Please try again."
 
-            # Add references
-            if page_refs:
-                source_text = "\n\n" + "─" * 60 + "\nSources:\n"
-                for ref in page_refs:
-                    source_text += f"• {ref['book']} by {ref['author']} (Page {ref['page']})\n"
-                text += source_text
-
+            # Don't add source references - keep response clean
             return text
 
         except Exception as e:

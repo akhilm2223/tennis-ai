@@ -17,13 +17,8 @@ function App() {
   const coachQRef = useRef()
   const animationFrameRef = useRef(null)
 
-  const coachMessages = [
-    "Hey Akhil! How are you doing today, champ?",
-    "What's up Akhil? Ready to crush it on the court?",
-    "Akhil! Good to see you! How's your game been?",
-    "Hey there Akhil! Feeling pumped for some tennis?",
-    "Akhil my friend! How's everything going with you?"
-  ]
+  // Backend API URL for mental coaching
+  const COACH_API_URL = 'http://localhost:5002'
 
   const uploadTriggerPhrases = [
     'upload video',
@@ -60,15 +55,7 @@ function App() {
       
       console.log('Heard:', text)
       
-      // WAKE WORD: Must say "hey tennis" to activate
-      if (!text.includes('hey tennis') && !text.includes('hey tenis')) {
-        console.log('⏸️ Waiting for wake word "hey tennis"...')
-        return
-      }
-      
-      console.log('✅ Wake word detected!')
-      
-      // Check for video-related keywords AFTER wake word
+      // Check for video-related keywords
       const videoKeywords = ['video', 'upload', 'analyze', 'open', 'show']
       const hasVideoKeyword = videoKeywords.some(keyword => text.includes(keyword))
       
@@ -87,9 +74,9 @@ function App() {
         return // Exit early
       }
       
-      // Default: Just greet if only wake word is said
+      // Default: activate coach for any speech with the actual question
       if (!isTalking) {
-        handleAskCoach()
+        handleAskCoach(text)
       }
     }
 
@@ -98,83 +85,119 @@ function App() {
     }
 
     recognition.start()
-    console.log('🎤 Voice recognition started - say "Hey Tennis" to activate Coach Q')
+    console.log('🎤 Voice recognition started - listening for your questions')
 
     return () => {
       recognition.stop()
     }
   }, [isTalking])
 
-  const handleAskCoach = () => {
+  const handleAskCoach = async (userQuestion = null) => {
     if (isTalking) return
     
     setIsTalking(true)
     
-    // Random message
-    const message = coachMessages[Math.floor(Math.random() * coachMessages.length)]
-    
-    // Speech synthesis with SIMPLE, RELIABLE lip sync
-    const utterance = new SpeechSynthesisUtterance(message)
-    utterance.rate = 0.9
-    utterance.pitch = 1.1
-    utterance.volume = 1
-    utterance.lang = 'en-US'
-    
-    let t = 0
-    let isAnimating = false
-    
-    // Simple sine wave animation - guaranteed to work
-    function animateMouth() {
-      if (!isAnimating) return
+    try {
+      // Use the user's actual question or a default greeting
+      const query = userQuestion || 'Hello Coach, I need mental coaching advice'
       
-      t += 0.2
-      // Base sine wave movement (0 to 1)
-      let openness = (Math.sin(t) + 1) / 2
+      console.log('📝 Asking coach:', query)
       
-      // Add randomness for natural feel
-      openness *= 0.5 + Math.random() * 0.5
+      // Call backend Mental Coach API with RAG, Claude, and ElevenLabs TTS
+      const response = await fetch(`${COACH_API_URL}/api/coach/chat-with-audio`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          query: query,
+          session_id: 'voice-session-' + Date.now()
+        })
+      })
       
-      console.log('Setting mouth openness:', openness.toFixed(2))
-      setMouthOpenness(openness)
-      animationFrameRef.current = requestAnimationFrame(animateMouth)
-    }
-    
-    utterance.onstart = () => {
-      console.log("🎤 Coach Q started talking")
-      setCurrentMessage(message)
-      t = 0
-      isAnimating = true
-      animateMouth()
-    }
-    
-    utterance.onboundary = (event) => {
-      // Emphasize on word boundaries
-      if (event.name === 'word') {
-        setMouthOpenness(1) // Quick wide open
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Backend error:', errorText)
+        throw new Error(`Failed to get coaching response: ${response.status}`)
       }
-    }
-    
-    utterance.onend = () => {
-      console.log("🤫 Coach Q finished talking")
-      isAnimating = false
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current)
+      
+      // Check if we got audio or JSON text response
+      const contentType = response.headers.get('content-type')
+      console.log('Response content-type:', contentType)
+      let message = ''
+      let audioBlob = null
+      
+      if (contentType && contentType.includes('audio')) {
+        // Got ElevenLabs audio!
+        console.log('🎵 Received ElevenLabs audio')
+        message = response.headers.get('X-Response-Text') || 'Audio response received'
+        audioBlob = await response.blob()
+        
+        // Play ElevenLabs audio
+        const audioUrl = URL.createObjectURL(audioBlob)
+        const audio = new Audio(audioUrl)
+        
+        // Setup lip sync animation for audio playback
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+        const source = audioContext.createMediaElementSource(audio)
+        const analyser = audioContext.createAnalyser()
+        source.connect(analyser)
+        analyser.connect(audioContext.destination)
+        analyser.fftSize = 256
+        const dataArray = new Uint8Array(analyser.frequencyBinCount)
+        
+        let isAnimating = true
+        function animateFromAudio() {
+          if (!isAnimating) return
+          analyser.getByteFrequencyData(dataArray)
+          const average = dataArray.reduce((a, b) => a + b) / dataArray.length
+          const openness = Math.min(average / 128, 1)
+          setMouthOpenness(openness)
+          requestAnimationFrame(animateFromAudio)
+        }
+        
+        audio.onplay = () => {
+          console.log("🎤 Coach Q started talking (ElevenLabs)")
+          setCurrentMessage('')  // Don't show text, just audio
+          isAnimating = true
+          animateFromAudio()
+        }
+        
+        audio.onended = () => {
+          console.log("🤫 Coach Q finished talking")
+          isAnimating = false
+          setMouthOpenness(0)
+          setIsTalking(false)
+          setTimeout(() => setCurrentMessage(''), 1000)
+          URL.revokeObjectURL(audioUrl)
+        }
+        
+        audio.play()
+        return // Exit early, audio is playing
+      } else {
+        // No ElevenLabs audio available
+        console.error('ElevenLabs audio not available')
+        setIsTalking(false)
+        throw new Error('ElevenLabs audio not available. Please check server configuration.')
       }
-      setMouthOpenness(0)
+      
+    } catch (error) {
+      console.error('Error calling coach API:', error)
       setIsTalking(false)
-      setTimeout(() => setCurrentMessage(''), 1000)
-    }
-    
-    utterance.onerror = () => {
-      isAnimating = false
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current)
-      }
       setMouthOpenness(0)
-      setIsTalking(false)
+      
+      // Fallback message
+      const fallbackMsg = "I'm having trouble connecting to the coaching service. Please make sure the backend is running."
+      const fallbackUtterance = new SpeechSynthesisUtterance(fallbackMsg)
+      fallbackUtterance.rate = 0.9
+      fallbackUtterance.pitch = 1.1
+      fallbackUtterance.onend = () => {
+        setIsTalking(false)
+        setCurrentMessage('')
+        setMouthOpenness(0)
+      }
+      window.speechSynthesis.speak(fallbackUtterance)
     }
-    
-    window.speechSynthesis.speak(utterance)
   }
 
   const handleUploadRequest = () => {
