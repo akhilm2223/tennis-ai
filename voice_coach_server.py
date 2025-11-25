@@ -21,9 +21,9 @@ try:
     from RAG_MentalCoach.coach.coach import MentalCoachChatbot
     coach_chatbot = MentalCoachChatbot()
     COACH_AVAILABLE = True
-    print("✅ Mental Coach Chatbot initialized")
+    print("Mental Coach Chatbot initialized")
 except Exception as e:
-    print(f"⚠️  Warning: Could not initialize Mental Coach Chatbot: {e}")
+    print(f"Warning: Could not initialize Mental Coach Chatbot: {e}")
     COACH_AVAILABLE = False
     coach_chatbot = None
 
@@ -34,21 +34,21 @@ try:
     ELEVENLABS_AVAILABLE = tts_is_available()
 except Exception as e:
     ELEVENLABS_AVAILABLE = False
-    print(f"⚠️  Warning: Could not import TTS service: {e}")
+    print(f"Warning: Could not import TTS service: {e}")
 
 # Initialize Speech Recognition for STT
 try:
     import speech_recognition as sr
     from pydub import AudioSegment
     SPEECH_RECOGNITION_AVAILABLE = True
-    print("✅ Speech Recognition initialized")
+    print("Speech Recognition initialized")
 except ImportError as e:
     SPEECH_RECOGNITION_AVAILABLE = False
-    print(f"⚠️  Warning: Could not import Speech Recognition libraries: {e}")
+    print(f"Warning: Could not import Speech Recognition libraries: {e}")
     print("   Install with: pip install SpeechRecognition pydub")
 except Exception as e:
     SPEECH_RECOGNITION_AVAILABLE = False
-    print(f"⚠️  Warning: Could not initialize Speech Recognition: {e}")
+    print(f"Warning: Could not initialize Speech Recognition: {e}")
 
 # Initialize Galileo MCP service
 try:
@@ -136,19 +136,21 @@ def coach_voice_chat():
                 'error': 'Empty audio file'
             }), 400
         
-        print(f"🎤 Received audio file: {audio_file.filename}")
+        print(f"Received audio file: {audio_file.filename}")
         
         # Save audio file temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_audio:
             audio_path = temp_audio.name
             audio_file.save(audio_path)
         
+        wav_path = None
         try:
             # Convert audio to WAV format if needed (for speech recognition)
             try:
                 audio = AudioSegment.from_file(audio_path)
                 wav_path = audio_path.replace('.wav', '_converted.wav')
                 audio.export(wav_path, format="wav")
+                del audio  # Release file handle
             except FileNotFoundError as e:
                 if 'ffprobe' in str(e) or 'ffmpeg' in str(e):
                     return jsonify({
@@ -175,8 +177,13 @@ def coach_voice_chat():
             
             # Transcribe with language hint
             try:
+<<<<<<< HEAD
                 query = recognizer.recognize_google(audio_data, language='en-US', show_all=False)
                 print(f"📝 Transcribed: {query}")
+=======
+                query = recognizer.recognize_google(audio_data)
+                print(f"Transcribed: {query}")
+>>>>>>> dd1714b7c76b9f6e591eb4b9a71a9c2bbbcaea80
             except sr.UnknownValueError:
                 return jsonify({
                     'success': False,
@@ -209,7 +216,11 @@ def coach_voice_chat():
                     'error': 'Could not generate response'
                 }), 500
             
+<<<<<<< HEAD
             print(f"🤖 Generated response (full):\n{response_text}\n{'='*60}")
+=======
+            print(f"Generated response: {response_text[:100]}...")
+>>>>>>> dd1714b7c76b9f6e591eb4b9a71a9c2bbbcaea80
             
             # Extract sources from context_items
             sources_list = []
@@ -265,7 +276,7 @@ def coach_voice_chat():
             sources_header = sources_json[:2000] if len(sources_json) <= 2000 else sources_json[:1997] + "..."
             
             # Log sources used in the response
-            print(f"📚 Sources used in response ({len(sources_list)} total):")
+            print(f"Sources used in response ({len(sources_list)} total):")
             for idx, source in enumerate(sources_list, 1):
                 source_str = f"  {idx}. [{source.get('type', 'Unknown')}] {source.get('title', 'Unknown Source')}"
                 if source.get('author'):
@@ -301,10 +312,18 @@ def coach_voice_chat():
                     'error': 'Could not generate audio response'
                 }), 500
             
-            # Clean up temp files
-            os.unlink(audio_path)
-            if os.path.exists(wav_path):
-                os.unlink(wav_path)
+            # Clean up temp files (use try-except to handle file locking issues on Windows)
+            try:
+                if os.path.exists(audio_path):
+                    os.unlink(audio_path)
+            except Exception as e:
+                print(f"Warning: Could not delete temp file {audio_path}: {e}")
+            
+            try:
+                if wav_path and os.path.exists(wav_path):
+                    os.unlink(wav_path)
+            except Exception as e:
+                print(f"Warning: Could not delete temp file {wav_path}: {e}")
             
             # Return audio file with full text in headers (no truncation)
             # Sanitize header values (remove newlines and non-ASCII characters)
@@ -330,11 +349,18 @@ def coach_voice_chat():
             )
             
         except Exception as e:
-            # Clean up temp files on error
-            if os.path.exists(audio_path):
-                os.unlink(audio_path)
-            if 'wav_path' in locals() and os.path.exists(wav_path):
-                os.unlink(wav_path)
+            # Clean up temp files on error (use try-except to handle file locking issues)
+            try:
+                if os.path.exists(audio_path):
+                    os.unlink(audio_path)
+            except Exception as cleanup_error:
+                print(f"Warning: Could not delete temp file {audio_path}: {cleanup_error}")
+            
+            try:
+                if wav_path and os.path.exists(wav_path):
+                    os.unlink(wav_path)
+            except Exception as cleanup_error:
+                print(f"Warning: Could not delete temp file {wav_path}: {cleanup_error}")
             raise e
             
     except Exception as e:
@@ -354,6 +380,87 @@ def clear_conversation():
         'success': True,
         'message': 'Memory functionality is not enabled. No conversation history to clear.'
     })
+
+
+@app.route('/api/coach/chat-with-audio', methods=['POST'])
+def coach_chat_with_audio():
+    """Text-based chat that returns both text and ElevenLabs audio"""
+    if not COACH_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'error': 'Coach chatbot not available. Check API keys and configuration.'
+        }), 503
+    
+    data = request.get_json()
+    query = data.get('query', '').strip()
+    
+    if not query:
+        return jsonify({
+            'success': False,
+            'error': 'Query is required'
+        }), 400
+    
+    try:
+        # Get session ID from request (or use default)
+        session_id = data.get('session_id', 'default')
+        if not session_id or session_id.strip() == '':
+            session_id = 'default'
+        
+        # Search for relevant content
+        context_items = coach_chatbot.search_pinecone(query)
+        
+        # Generate response with conversation memory
+        response_text = coach_chatbot.generate_response(query, context_items, session_id=session_id)
+        
+        if not response_text:
+            return jsonify({
+                'success': False,
+                'error': 'Could not generate response'
+            }), 500
+        
+        # Generate ElevenLabs audio if available
+        print(f"ELEVENLABS_AVAILABLE: {ELEVENLABS_AVAILABLE}")
+        if ELEVENLABS_AVAILABLE:
+            try:
+                print("Generating ElevenLabs audio...")
+                audio_bytes = text_to_speech(response_text)
+                print(f"Audio bytes generated: {len(audio_bytes) if audio_bytes else 0}")
+                if audio_bytes:
+                    print("Returning audio response")
+                    # Return audio with text in headers
+                    return Response(
+                        audio_bytes,
+                        mimetype='audio/mpeg',
+                        headers={
+                            'X-Response-Text': sanitize_header_value(response_text),
+                            'X-Query': sanitize_header_value(query)
+                        }
+                    )
+                else:
+                    print("ElevenLabs returned None - falling back to JSON")
+            except Exception as e:
+                print(f"ElevenLabs TTS error: {e}")
+                import traceback
+                traceback.print_exc()
+                # Fall through to return text-only response
+        else:
+            print("ElevenLabs not available - returning JSON")
+        
+        # Fallback: return text-only response
+        return jsonify({
+            'success': True,
+            'response': response_text,
+            'audio_available': False
+        })
+            
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in coach chat with audio: {error_details}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @app.route('/api/coach/chat', methods=['POST'])
@@ -394,7 +501,7 @@ def coach_chat():
         
         # Extract and log sources used in the response
         if context_items:
-            print(f"📚 Sources used in response ({len(context_items)} total):")
+            print(f"Sources used in response ({len(context_items)} total):")
             for idx, item in enumerate(context_items, 1):
                 # Get title
                 title = (
@@ -432,7 +539,7 @@ def coach_chat():
                     source_str += f" | {url}"
                 print(source_str)
         else:
-            print("📚 No sources found for this query")
+            print("No sources found for this query")
         
         # Extract sources for Galileo logging
         sources_list = []
@@ -498,10 +605,10 @@ def coach_chat():
 
 
 if __name__ == '__main__':
-    print("🎤 Voice Coach Server Starting...")
-    print("📡 Server running on http://localhost:5002")
-    print("🌐 Web interface: http://localhost:5002/")
-    print("🔊 Voice chat endpoint: POST /api/coach/voice-chat")
-    print("💬 Text chat endpoint: POST /api/coach/chat")
+    print("Voice Coach Server Starting...")
+    print("Server running on http://localhost:5002")
+    print("Web interface: http://localhost:5002/")
+    print("Voice chat endpoint: POST /api/coach/voice-chat")
+    print("Text chat endpoint: POST /api/coach/chat")
     app.run(host='0.0.0.0', port=5002, debug=True)
 
